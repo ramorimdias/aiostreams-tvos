@@ -15,6 +15,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, nullable) void (^onMessage)(NSDictionary *message);
 @property (nonatomic, copy, nullable) void (^onLoadFailed)(NSString *error);
 @property (nonatomic, copy, nullable) void (^onLoadFinished)(void);
+/** The page's process ended (most often for memory) and the page is loading again where it was. */
+@property (nonatomic, copy, nullable) void (^onProcessEnded)(void);
 
 - (instancetype)initWithFrame:(CGRect)frame documentStartScript:(NSString *)script NS_DESIGNATED_INITIALIZER;
 - (instancetype)initWithFrame:(CGRect)frame NS_UNAVAILABLE;

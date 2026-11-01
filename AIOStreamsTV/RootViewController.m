@@ -8,6 +8,11 @@
 #import "AIOWebView.h"
 
 static NSString *const kServerKey = @"serverURL";
+/** The page's localStorage by origin, which tvOS may not keep for the web view. */
+static NSString *const kStorageKey = @"webStorage";
+/** tvOS keeps an app's settings to well under a megabyte, so the copy stays small. */
+static const NSUInteger kStorageMaxChars = 350000;
+static const NSUInteger kStorageMaxValue = 100000;
 /** `mpv` (the default) or `vlc`. */
 static NSString *const kEngineKey = @"playerEngine";
 /** Held this long, Play/Pause opens the app's own menu instead. */
@@ -27,6 +32,7 @@ static const CGFloat kSwipeStepY = 150;
 /** The page has said hello, so it takes Back. */
 @property (nonatomic) BOOL connected;
 @property (nonatomic) BOOL pageFullscreen;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSString *> *> *webStorage;
 
 @property (nonatomic, strong, nullable) NSTimer *repeat;
 @property (nonatomic, copy, nullable) NSString *repeating;
@@ -40,6 +46,7 @@ static const CGFloat kSwipeStepY = 150;
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = UIColor.blackColor;
+    [self loadWebStorage];
 
     self.videoView = [[UIView alloc] initWithFrame:self.view.bounds];
     self.videoView.backgroundColor = UIColor.blackColor;
@@ -67,6 +74,10 @@ static const CGFloat kSwipeStepY = 150;
     self.web.onLoadFinished = ^{
         weakSelf.status.hidden = YES;
         [weakSelf.web focusPage];
+    };
+    self.web.onProcessEnded = ^{
+        // Most often memory; the page loads again where it was.
+        [weakSelf flashStatus:@"The page ran out of memory and reloaded."];
     };
     self.web.onLoadFailed = ^(NSString *error) {
         weakSelf.connected = NO;
@@ -105,6 +116,66 @@ static const CGFloat kSwipeStepY = 150;
 - (void)showStatus:(NSString *)text {
     self.status.text = text;
     self.status.hidden = NO;
+}
+
+/** A notice that clears itself. */
+- (void)flashStatus:(NSString *)text {
+    [self showStatus:text];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        if ([self.status.text isEqualToString:text]) self.status.hidden = YES;
+    });
+}
+
+#pragma mark - The page's storage
+
+- (void)loadWebStorage {
+    self.webStorage = [NSMutableDictionary dictionary];
+    NSDictionary *saved = [NSUserDefaults.standardUserDefaults dictionaryForKey:kStorageKey];
+    for (NSString *origin in saved) {
+        NSDictionary *items = saved[origin];
+        if (![items isKindOfClass:NSDictionary.class]) continue;
+        NSMutableDictionary *copy = [NSMutableDictionary dictionary];
+        for (NSString *key in items) {
+            if ([items[key] isKindOfClass:NSString.class]) copy[key] = items[key];
+        }
+        self.webStorage[origin] = copy;
+    }
+}
+
+- (NSUInteger)webStorageSize {
+    NSUInteger size = 0;
+    for (NSString *origin in self.webStorage) {
+        NSDictionary *items = self.webStorage[origin];
+        for (NSString *key in items) size += key.length + [items[key] length];
+    }
+    return size;
+}
+
+- (void)storageChanged:(NSDictionary *)message {
+    NSString *origin = [message[@"origin"] isKindOfClass:NSString.class] ? message[@"origin"] : nil;
+    if (!origin.length) return;
+    NSMutableDictionary *items = self.webStorage[origin];
+    if (!items) self.webStorage[origin] = items = [NSMutableDictionary dictionary];
+    if ([message[@"clear"] boolValue]) {
+        [items removeAllObjects];
+    } else {
+        NSString *key = [message[@"key"] isKindOfClass:NSString.class] ? message[@"key"] : nil;
+        if (!key) return;
+        id value = message[@"value"];
+        [items removeObjectForKey:key];
+        if ([value isKindOfClass:NSString.class] && [value length] <= kStorageMaxValue &&
+            self.webStorageSize + key.length + [value length] <= kStorageMaxChars) {
+            items[key] = value;
+        }
+    }
+    // Saved once a burst of changes settles.
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(saveWebStorage) object:nil];
+    [self performSelector:@selector(saveWebStorage) withObject:nil afterDelay:1.0];
+}
+
+- (void)saveWebStorage {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(saveWebStorage) object:nil];
+    [NSUserDefaults.standardUserDefaults setObject:self.webStorage forKey:kStorageKey];
 }
 
 #pragma mark - Server
@@ -236,7 +307,9 @@ static const CGFloat kSwipeStepY = 150;
     for (NSString *placeholder in values) {
         script = [script stringByReplacingOccurrencesOfString:placeholder withString:[self jsonString:values[placeholder]]];
     }
-    return script;
+    NSData *storage = [NSJSONSerialization dataWithJSONObject:self.webStorage ?: @{} options:0 error:nil];
+    NSString *storageJSON = storage ? [[NSString alloc] initWithData:storage encoding:NSUTF8StringEncoding] : @"null";
+    return [script stringByReplacingOccurrencesOfString:@"__STORAGE__" withString:storageJSON];
 }
 
 - (NSString *)jsonString:(NSString *)value {
@@ -291,6 +364,8 @@ static const CGFloat kSwipeStepY = 150;
         [self sendToPage:@{ @"type": @"diagnostics", @"text": text }];
     } else if ([type isEqualToString:@"exit"]) {
         [self leaveApp];
+    } else if ([type isEqualToString:@"tvos-storage"]) {
+        [self storageChanged:message];
     } else if ([type isEqualToString:@"tvos-keyboard"]) {
         [self showKeyboard:message];
     } else if ([type isEqualToString:@"web-error"]) {
@@ -453,6 +528,7 @@ static const CGFloat kSwipeStepY = 150;
 #pragma mark - App state
 
 - (void)appWillResignActive {
+    [self saveWebStorage];
     [self stopRepeating];
     [self.player pauseForBackground];
 }

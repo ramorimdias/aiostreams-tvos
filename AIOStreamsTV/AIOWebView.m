@@ -256,7 +256,14 @@ static void AIOSendBool(id target, NSString *selectorName, BOOL value) {
 }
 
 - (void)contentProcessEnded {
-    [self reload];
+    // Where the page was, rather than its start, which the app's sign-in survives.
+    NSURL *current = AIOSend0(self.webView, @"URL");
+    if (current) {
+        AIOSendObject(self.webView, @"loadRequest:", [NSURLRequest requestWithURL:current]);
+    } else {
+        [self reload];
+    }
+    if (self.onProcessEnded) self.onProcessEnded();
 }
 
 @end

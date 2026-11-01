@@ -3,7 +3,8 @@
  * (protocol 2, as packages/android/bridge/AppBridge.kt injects it). The page
  * then lays itself out for a TV and plays through the app's player.
  *
- * The app fills in __VERSION__, __DEVICE__ and __DEVICE_ID__ as JSON strings.
+ * The app fills in __VERSION__, __DEVICE__ and __DEVICE_ID__ as JSON strings, and
+ * the storage placeholder with its copy of the page's localStorage.
  */
 (() => {
   if (window.top !== window || window.aiostreamsApp) return;
@@ -29,6 +30,46 @@
 
   const listeners = new Set();
   const send = (message) => handler.postMessage(JSON.stringify(message));
+
+  /*
+   * tvOS can drop a web view's stored data between launches, and with it the
+   * page's sign-in. The app keeps a copy of localStorage (by origin), puts
+   * back what is missing as the page starts, and hears of every change.
+   */
+  try {
+    const saved = __STORAGE__?.[location.origin];
+    if (saved && typeof saved === 'object') {
+      for (const [key, value] of Object.entries(saved)) {
+        if (typeof value === 'string' && localStorage.getItem(key) === null)
+          localStorage.setItem(key, value);
+      }
+    }
+  } catch {}
+  try {
+    const proto = Storage.prototype;
+    const { setItem, removeItem, clear } = proto;
+    const local = (store) => {
+      try {
+        return store === window.localStorage;
+      } catch {
+        return false;
+      }
+    };
+    const origin = location.origin;
+    proto.setItem = function (key, value) {
+      setItem.call(this, key, value);
+      if (local(this))
+        send({ type: 'tvos-storage', origin, key: String(key), value: String(value) });
+    };
+    proto.removeItem = function (key) {
+      removeItem.call(this, key);
+      if (local(this)) send({ type: 'tvos-storage', origin, key: String(key), value: null });
+    };
+    proto.clear = function () {
+      clear.call(this);
+      if (local(this)) send({ type: 'tvos-storage', origin, clear: true });
+    };
+  } catch {}
 
   // The app calls this with each message for the page.
   Object.defineProperty(window, '__aioReceive', {
