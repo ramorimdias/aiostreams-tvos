@@ -1,10 +1,8 @@
 #import "RootViewController.h"
 
 #import <Network/Network.h>
-#import <TVServices/TVServices.h>
 #import <objc/message.h>
 
-#import "AIOShared.h"
 
 #import "AIOMPVPlayer.h"
 #import "AIONowPlaying.h"
@@ -536,11 +534,6 @@ static const CGFloat kSwipeStepY = 150;
         [self sendLinks];
     } else if ([type isEqualToString:@"tvos-route"]) {
         [self routeChanged:message[@"hash"]];
-    } else if ([type isEqualToString:@"watch-next"]) {
-        // For the Top Shelf, which reads it from the App Group.
-        id items = message[@"items"];
-        [AIOShared saveWatchNext:[items isKindOfClass:NSArray.class] ? items : @[]];
-        [TVTopShelfContentProvider topShelfContentDidChange];
     } else if ([type isEqualToString:@"tvos-storage"]) {
         [self storageChanged:message];
     } else if ([type isEqualToString:@"tvos-keyboard"]) {
@@ -548,7 +541,7 @@ static const CGFloat kSwipeStepY = 150;
     } else if ([type isEqualToString:@"web-error"]) {
         NSLog(@"[page] %@", message[@"message"]);
     }
-    // Others (watch-next, now-playing, keyboard-completions, ...) have nothing on tvOS.
+    // Others (watch-next, keyboard-completions, ...) have nothing on tvOS.
 }
 
 /** Back to the Home screen, as Menu on the first page does in other apps. */
