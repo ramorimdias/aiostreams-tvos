@@ -1,0 +1,35 @@
+name: AIOStreamsTV
+options:
+  bundleIdPrefix: io.github.aiostreamstv
+  deploymentTarget:
+    tvOS: "17.0"
+settings:
+  base:
+    MARKETING_VERSION: 0.1.0
+    CURRENT_PROJECT_VERSION: 1
+    # Filled in by the build from the AIO_SERVER_URL secret; empty asks on first launch.
+    AIO_SERVER_URL: ""
+targets:
+  AIOStreamsTV:
+    type: application
+    platform: tvOS
+    sources:
+      - path: AIOStreamsTV
+        excludes:
+          - Info.plist
+          - bridge.js
+      - path: AIOStreamsTV/bridge.js
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_NAME: AIOStreamsTV
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.aiostreamstv.app
+        INFOPLIST_FILE: AIOStreamsTV/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CLANG_ENABLE_OBJC_ARC: YES
+        TARGETED_DEVICE_FAMILY: 3
+        ENABLE_BITCODE: NO
+        CODE_SIGN_STYLE: Automatic
+        # WebKit is loaded at runtime; nothing links against it.
+        GCC_WARN_UNDECLARED_SELECTOR: NO
+    scheme: {}

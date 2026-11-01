@@ -1,0 +1,67 @@
+# AIOStreams TV
+
+AIOStreams' own web app on Apple TV, the way the official Android app does it: your server's
+page on top, drawing every screen and the player's controls, and VLC playing the video beneath it.
+The page comes straight from your AIOStreams instance, so every server update shows up here
+without rebuilding the app.
+
+The app speaks the same bridge as AIOStreams' Android and desktop apps (`window.aiostreamsApp`,
+protocol 2), introducing itself as the Android app on a TV. The page then switches to its TV
+layout, takes the remote, and hands playback to the app.
+
+## Remote
+
+| Siri Remote               | Does                                            |
+| ------------------------- | ----------------------------------------------- |
+| Clickpad / swipe          | Arrow keys (moves focus, seeks in the player)   |
+| Click                     | Enter (hold it for the page's hold actions)     |
+| Back / Menu               | The page's Back; twice on Home leaves the app   |
+| Play/Pause                | Play/Pause                                      |
+| **Hold Play/Pause (1 s)** | App menu: reload, change the server address     |
+
+Clicking a text field opens the tvOS keyboard (dictation works there too).
+
+## Build with GitHub Actions
+
+1. Make a **private** repository and push this folder to `main`.
+2. Optional: in *Settings → Secrets and variables → Actions*, add `AIO_SERVER_URL` with your
+   address (e.g. `https://aiostreams.example.com/jellyfin/<uuid>/<token>/web/`). It is built into the
+   app so you don't type it with the remote. It contains your access token, which is why the
+   repository should be private. Without it, the app asks on first launch.
+3. Each push builds `AIOStreamsTV.ipa` (unsigned) as an artifact of the run. A `v*` tag also
+   publishes it as a release.
+
+The workflow generates the Xcode project with XcodeGen, installs TVVLCKit with CocoaPods, and
+builds without signing. Nothing needs a Mac.
+
+## Install on the Apple TV
+
+The IPA is unsigned; the sideloading tool signs it with your Apple ID.
+
+- **atvloadly** (Docker on Linux, e.g. a NAS): pair the Apple TV once, upload the IPA, and it
+  re-signs the app before the 7-day free-account limit runs out.
+- **Sideloadly** (Mac): pair the Apple TV in *Remotes and Devices → Remote App and Devices*, pick the IPA.
+
+With a paid Apple developer account the signature lasts a year.
+
+## Build locally (Mac)
+
+```sh
+brew install xcodegen
+xcodegen generate && pod install
+open AIOStreamsTV.xcworkspace
+```
+
+Pick your Apple TV as the destination and run. Safari's *Develop* menu can inspect the page.
+
+## Notes
+
+- tvOS ships WebKit without exposing it in the SDK, so the app loads it at runtime. That is a
+  private API: fine for sideloading, never for the App Store.
+- VLC plays MKV, HEVC, DTS, TrueHD and image subtitles. VLCKit 3 shows HDR tone-mapped to SDR
+  rather than switching the TV to HDR, and Dolby Vision profile 5 files can show wrong colours.
+  Audio is decoded on the Apple TV, not passed through to a receiver.
+- Not carried over from the Android app: seek-bar thumbnails, the player stats overlay, subtitle
+  styling from the page, the mpv config editor, downloads and voice search.
+- tvOS may clear a web page's stored data when space runs low; you'd sign in again.
+- No app icon yet; tvOS shows a blank tile.
