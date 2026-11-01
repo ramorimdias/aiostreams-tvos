@@ -176,6 +176,32 @@ static void AIOSendBool(id target, NSString *selectorName, BOOL value) {
 - (void)layoutSubviews {
     [super layoutSubviews];
     ((UIView *)self.webView).frame = self.bounds;
+    [self fillScreen];
+}
+
+/**
+ * WebKit fits the page to the screen less tvOS's safe area (the margin kept
+ * for TVs that overscan) but draws it from the left edge, leaving a strip on
+ * the right. The page keeps its own margins, so the web view gets the whole
+ * screen to lay out in.
+ */
+- (void)fillScreen {
+    id webView = self.webView;
+    if (!webView) return;
+    CGSize size = self.bounds.size;
+    if (size.width <= 0 || size.height <= 0) return;
+    SEL unobscured = NSSelectorFromString(@"_setUnobscuredSafeAreaInsets:");
+    if ([webView respondsToSelector:unobscured]) {
+        ((void (*)(id, SEL, UIEdgeInsets))objc_msgSend)(webView, unobscured, UIEdgeInsetsZero);
+    }
+    SEL obscured = NSSelectorFromString(@"_setObscuredInsets:");
+    if ([webView respondsToSelector:obscured]) {
+        ((void (*)(id, SEL, UIEdgeInsets))objc_msgSend)(webView, obscured, UIEdgeInsetsZero);
+    }
+    SEL layout = NSSelectorFromString(@"_overrideLayoutParametersWithMinimumLayoutSize:maximumUnobscuredSizeOverride:");
+    if ([webView respondsToSelector:layout]) {
+        ((void (*)(id, SEL, CGSize, CGSize))objc_msgSend)(webView, layout, size, size);
+    }
 }
 
 - (void)loadURL:(NSURL *)url {

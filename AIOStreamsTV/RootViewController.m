@@ -79,6 +79,20 @@ static const CGFloat kSwipeStepY = 150;
     [self loadServer];
 }
 
+/**
+ * Cancels tvOS's safe area for the whole screen: the page lays out edge to
+ * edge and keeps its own margins, as on Android TV.
+ */
+- (void)viewSafeAreaInsetsDidChange {
+    [super viewSafeAreaInsetsDidChange];
+    UIEdgeInsets safe = self.view.safeAreaInsets;
+    UIEdgeInsets added = self.additionalSafeAreaInsets;
+    UIEdgeInsets system = UIEdgeInsetsMake(safe.top - added.top, safe.left - added.left,
+                                           safe.bottom - added.bottom, safe.right - added.right);
+    UIEdgeInsets cancel = UIEdgeInsetsMake(-system.top, -system.left, -system.bottom, -system.right);
+    if (!UIEdgeInsetsEqualToEdgeInsets(added, cancel)) self.additionalSafeAreaInsets = cancel;
+}
+
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     if (![self serverURL]) {
