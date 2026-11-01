@@ -2,6 +2,8 @@ platform :tvos, '17.0'
 use_frameworks!
 
 target 'AIOStreamsTV' do
+  pod 'MPVKit', :podspec => 'MPVKit.podspec'
+  # The fallback player, picked in the app's menu.
   pod 'TVVLCKit', '~> 3.6'
 end
 

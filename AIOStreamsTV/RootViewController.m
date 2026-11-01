@@ -2,10 +2,14 @@
 
 #import <objc/message.h>
 
-#import "AIOPlayer.h"
+#import "AIOMPVPlayer.h"
+#import "AIOPlayerEngine.h"
+#import "AIOVLCPlayer.h"
 #import "AIOWebView.h"
 
 static NSString *const kServerKey = @"serverURL";
+/** `mpv` (the default) or `vlc`. */
+static NSString *const kEngineKey = @"playerEngine";
 /** Held this long, Play/Pause opens the app's own menu instead. */
 static const NSTimeInterval kMenuHold = 1.0;
 static const NSTimeInterval kRepeatDelay = 0.45;
@@ -17,7 +21,7 @@ static const CGFloat kSwipeStepY = 150;
 @interface RootViewController ()
 @property (nonatomic, strong) UIView *videoView;
 @property (nonatomic, strong) AIOWebView *web;
-@property (nonatomic, strong) AIOPlayer *player;
+@property (nonatomic, strong) id<AIOPlayerEngine> player;
 @property (nonatomic, strong) UILabel *status;
 
 /** The page has said hello, so it takes Back. */
@@ -55,11 +59,8 @@ static const CGFloat kSwipeStepY = 150;
     self.status.numberOfLines = 0;
     [self.view addSubview:self.status];
 
-    self.player = [[AIOPlayer alloc] initWithVideoView:self.videoView];
+    [self makePlayer];
     __weak typeof(self) weakSelf = self;
-    self.player.send = ^(NSDictionary *message) {
-        [weakSelf sendToPage:message];
-    };
     self.web.onMessage = ^(NSDictionary *message) {
         [weakSelf receive:message];
     };
@@ -178,10 +179,46 @@ static const CGFloat kSwipeStepY = 150;
             [self askForServer];
         });
     }]];
+    NSString *other = self.usesVLC ? @"Player: VLC — switch to mpv" : @"Player: mpv — switch to VLC";
+    [menu addAction:[UIAlertAction actionWithTitle:other style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self switchPlayer];
+    }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
         [self.web focusPage];
     }]];
     [self presentViewController:menu animated:YES completion:nil];
+}
+
+#pragma mark - Player
+
+- (BOOL)usesVLC {
+    return [[NSUserDefaults.standardUserDefaults stringForKey:kEngineKey] isEqualToString:@"vlc"];
+}
+
+/** The chosen player, in a fresh view beneath the page. */
+- (void)makePlayer {
+    [self.player shutdown];
+    if (self.usesVLC) {
+        UIView *view = [[UIView alloc] initWithFrame:self.videoView.bounds];
+        view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        view.backgroundColor = UIColor.blackColor;
+        view.userInteractionEnabled = NO;
+        [self.videoView addSubview:view];
+        self.player = [[AIOVLCPlayer alloc] initWithVideoView:view];
+    } else {
+        self.player = [[AIOMPVPlayer alloc] initWithHost:self.videoView];
+    }
+    __weak typeof(self) weakSelf = self;
+    self.player.send = ^(NSDictionary *message) {
+        [weakSelf sendToPage:message];
+    };
+}
+
+- (void)switchPlayer {
+    [NSUserDefaults.standardUserDefaults setObject:self.usesVLC ? @"mpv" : @"vlc" forKey:kEngineKey];
+    [self makePlayer];
+    // The page's player started on the other one; reloading starts it afresh.
+    [self loadServer];
 }
 
 #pragma mark - Bridge
@@ -230,7 +267,8 @@ static const CGFloat kSwipeStepY = 150;
         NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"0";
         [self sendToPage:@{
             @"type": @"app-info", @"app": [version stringByAppendingString:@" (tvOS)"], @"platform": @"android",
-            @"mpv": NSNull.null, @"ffmpeg": NSNull.null, @"player": @"VLCKit", @"ac3Encoder": @NO,
+            @"mpv": self.usesVLC ? NSNull.null : @"libmpv (MPVKit)", @"ffmpeg": NSNull.null,
+            @"player": self.usesVLC ? @"VLCKit" : @"mpv", @"ac3Encoder": @NO,
         }];
     } else if ([type isEqualToString:@"fullscreen"]) {
         id value = message[@"value"];

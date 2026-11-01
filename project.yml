@@ -16,7 +16,12 @@ targets:
         excludes:
           - Info.plist
           - bridge.js
+          - Fonts
       - path: AIOStreamsTV/bridge.js
+        buildPhase: resources
+      # A folder in the app, for libass to read the subtitle font from.
+      - path: AIOStreamsTV/Fonts
+        type: folder
         buildPhase: resources
     settings:
       base:

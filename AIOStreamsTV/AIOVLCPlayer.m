@@ -1,4 +1,4 @@
-#import "AIOPlayer.h"
+#import "AIOVLCPlayer.h"
 
 #import <TVVLCKit/TVVLCKit.h>
 
@@ -43,7 +43,7 @@ static BOOL AIOSameLanguage(NSString *a, NSString *b) {
     return [AIOLanguage(a) isEqualToString:AIOLanguage(b)];
 }
 
-@interface AIOPlayer () <VLCMediaPlayerDelegate>
+@interface AIOVLCPlayer () <VLCMediaPlayerDelegate>
 @property (nonatomic, strong) VLCMediaPlayer *player;
 @property (nonatomic, strong, nullable) NSTimer *ticker;
 
@@ -93,7 +93,7 @@ static BOOL AIOSameLanguage(NSString *a, NSString *b) {
 @property (nonatomic) NSInteger audioDelayUs;
 @end
 
-@implementation AIOPlayer
+@implementation AIOVLCPlayer
 
 - (instancetype)initWithVideoView:(UIView *)videoView {
     self = [super init];
@@ -101,7 +101,7 @@ static BOOL AIOSameLanguage(NSString *a, NSString *b) {
     _videoView = videoView;
     _volume = 1;
     _speed = 1;
-    _subtitleOptions = [AIOPlayer subtitleOptionsFor:nil];
+    _subtitleOptions = [AIOVLCPlayer subtitleOptionsFor:nil];
     [self makePlayer];
     _audioLanguages = @[];
     _subtitleLanguages = @[];
@@ -215,7 +215,7 @@ static BOOL AIOParseColor(NSString *text, int *rgb, int *alpha) {
         if (self.url) self.player.currentAudioPlaybackDelay = self.audioDelayUs;
     } else if ([type isEqualToString:@"player-style"]) {
         NSDictionary *look = [message[@"subtitles"] isKindOfClass:NSDictionary.class] ? message[@"subtitles"] : nil;
-        if (look) self.subtitleOptions = [AIOPlayer subtitleOptionsFor:look];
+        if (look) self.subtitleOptions = [AIOVLCPlayer subtitleOptionsFor:look];
     } else if ([type isEqualToString:@"player-thumbnail"]) {
         // No seek-bar thumbnails here; the page shows none.
         self.send(@{ @"type": @"player-thumbnail", @"url": AIOString(message[@"url"]) ?: @"", @"src": NSNull.null });
@@ -292,6 +292,9 @@ static BOOL AIOParseColor(NSString *text, int *rgb, int *alpha) {
 - (void)stop {
     self.url = nil;
     self.stopping = YES;
+    // VLC takes a moment to stop, with its sound still playing; silence it first.
+    self.player.audio.muted = YES;
+    [self.player pause];
     [self.player stop];
     self.stopping = NO;
     [self stopTicking];
@@ -397,6 +400,12 @@ static BOOL AIOParseColor(NSString *text, int *rgb, int *alpha) {
     self.pendingSubtitleURL = nil;
     self.pendingSubtitleTitle = [name substringToIndex:MIN((NSUInteger)200, name.length)];
     [self.player addPlaybackSlave:[NSURL fileURLWithPath:path] type:VLCMediaPlaybackSlaveTypeSubtitle enforce:YES];
+}
+
+- (void)shutdown {
+    [self stop];
+    self.player.delegate = nil;
+    [self.videoView removeFromSuperview];
 }
 
 - (void)pauseForBackground {

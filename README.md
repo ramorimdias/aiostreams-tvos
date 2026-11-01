@@ -1,7 +1,7 @@
 # AIOStreams TV
 
 AIOStreams' own web app on Apple TV, the way the official Android app does it: your server's
-page on top, drawing every screen and the player's controls, and VLC playing the video beneath it.
+page on top, drawing every screen and the player's controls, and mpv playing the video beneath it.
 The page comes straight from your AIOStreams instance, so every server update shows up here
 without rebuilding the app.
 
@@ -24,7 +24,7 @@ works with any instance. Hold Play/Pause to change it later.
 | Click                     | Enter (hold it for the page's hold actions)     |
 | Back / Menu               | The page's Back; twice on Home leaves the app   |
 | Play/Pause                | Play/Pause                                      |
-| **Hold Play/Pause (1 s)** | App menu: reload, change the server address     |
+| **Hold Play/Pause (1 s)** | App menu: reload, server address, mpv or VLC    |
 
 Clicking a text field opens the tvOS keyboard (dictation works there too).
 
@@ -61,10 +61,14 @@ Pick your Apple TV as the destination and run. Safari's *Develop* menu can inspe
 
 - tvOS ships WebKit without exposing it in the SDK, so the app loads it at runtime. That is a
   private API: fine for sideloading, never for the App Store.
-- VLC plays MKV, HEVC, DTS, TrueHD and image subtitles. VLCKit 3 shows HDR tone-mapped to SDR
-  rather than switching the TV to HDR, and Dolby Vision profile 5 files can show wrong colours.
-  Audio is decoded on the Apple TV, not passed through to a receiver.
-- Not carried over from the Android app: seek-bar thumbnails, the player stats overlay, subtitle
-  styling from the page, the mpv config editor, downloads and voice search.
+- The player is libmpv, as in AIOStreams' desktop and Android apps, from Streamyfin's
+  [MPVKit](https://github.com/streamyfin/MPVKit) build, whose `vo_avfoundation` output hands
+  HDR10 and HLG to the TV. With *Match Content* on in the Apple TV's settings, the TV switches to
+  the video's range and frame rate. Dolby Vision plays through its HDR10 base layer. VLC remains
+  in the app menu as a fallback; it shows HDR as SDR.
+- Subtitles are drawn by libass with the bundled Noto Sans (SIL Open Font License).
+- MPVKit and VLCKit are GPL/LGPL, so builds of this app are for personal use.
+- Not carried over from the Android app: seek-bar thumbnails, the mpv config editor, downloads
+  and voice search.
 - tvOS may clear a web page's stored data when space runs low; you'd sign in again.
 - The icon and Top Shelf image are AIOStreams' own logo, from its `branding` folder.
