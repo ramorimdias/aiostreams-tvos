@@ -31,8 +31,8 @@ Clicking a text field opens the tvOS keyboard (dictation works there too).
 ## Build with GitHub Actions
 
 1. Push this folder to `main` of a GitHub repository.
-2. Each push builds `AIOStreamsTV.ipa` (unsigned) as an artifact of the run. A `v*` tag also
-   publishes it as a release.
+2. Each push to `main` builds `AIOStreamsTV.ipa` (unsigned) and puts it on the **Latest build**
+   release, at `releases/latest/download/AIOStreamsTV.ipa`. A `v*` tag gets a release of its own.
 
 The workflow generates the Xcode project with XcodeGen, installs TVVLCKit with CocoaPods, and
 builds without signing. Nothing needs a Mac.
