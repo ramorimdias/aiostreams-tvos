@@ -95,9 +95,8 @@ static const CGFloat kSwipeStepY = 150;
 #pragma mark - Server
 
 - (nullable NSURL *)serverURL {
-    NSString *saved = [NSUserDefaults.standardUserDefaults stringForKey:kServerKey];
-    if (saved.length == 0) saved = [NSBundle.mainBundle objectForInfoDictionaryKey:@"AIOServerURL"];
-    return [self normalized:saved];
+    // Asked for on first launch and kept on the device; nothing is built in.
+    return [self normalized:[NSUserDefaults.standardUserDefaults stringForKey:kServerKey]];
 }
 
 /** Takes the address as copied from the browser, with or without `/web/`. */

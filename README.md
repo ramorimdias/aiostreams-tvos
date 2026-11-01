@@ -9,6 +9,13 @@ The app speaks the same bridge as AIOStreams' Android and desktop apps (`window.
 protocol 2), introducing itself as the Android app on a TV. The page then switches to its TV
 layout, takes the remote, and hands playback to the app.
 
+## First launch
+
+The app asks for your AIOStreams web app address, e.g.
+`https://aiostreams.example.com/jellyfin/<uuid>/<token>/web/` (the `/web/` part is added if you
+leave it off). It is kept on the Apple TV only; no address is built into the app, so one build
+works with any instance. Hold Play/Pause to change it later.
+
 ## Remote
 
 | Siri Remote               | Does                                            |
@@ -23,12 +30,8 @@ Clicking a text field opens the tvOS keyboard (dictation works there too).
 
 ## Build with GitHub Actions
 
-1. Make a **private** repository and push this folder to `main`.
-2. Optional: in *Settings → Secrets and variables → Actions*, add `AIO_SERVER_URL` with your
-   address (e.g. `https://aiostreams.example.com/jellyfin/<uuid>/<token>/web/`). It is built into the
-   app so you don't type it with the remote. It contains your access token, which is why the
-   repository should be private. Without it, the app asks on first launch.
-3. Each push builds `AIOStreamsTV.ipa` (unsigned) as an artifact of the run. A `v*` tag also
+1. Push this folder to `main` of a GitHub repository.
+2. Each push builds `AIOStreamsTV.ipa` (unsigned) as an artifact of the run. A `v*` tag also
    publishes it as a release.
 
 The workflow generates the Xcode project with XcodeGen, installs TVVLCKit with CocoaPods, and

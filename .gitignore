@@ -1,0 +1,9 @@
+*.xcodeproj
+*.xcworkspace
+Pods/
+Podfile.lock
+build/
+DerivedData/
+*.ipa
+Payload/
+.DS_Store
