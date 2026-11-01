@@ -20,6 +20,26 @@
     delete window.OffscreenCanvas;
   } catch {}
   /*
+   * The page sizes artwork for a TV at up to twice its 1280-wide layout,
+   * which on an Apple TV 4K is twice what a 1080p picture shows and, decoded,
+   * what runs the page out of memory scrolling fast. At most 1.5 times, as a
+   * 1080p screen draws it, through the screen width the page reads it from.
+   */
+  try {
+    const width = Object.getOwnPropertyDescriptor(Screen.prototype, 'width');
+    const MAX_RATIO = 1.5;
+    Object.defineProperty(Screen.prototype, 'width', {
+      configurable: true,
+      get() {
+        const real = width.get.call(this);
+        const dppx = window.devicePixelRatio || 1;
+        const cap = (innerWidth * MAX_RATIO) / dppx;
+        return innerWidth && real > cap ? Math.round(cap) : real;
+      },
+    });
+  } catch {}
+
+  /*
    * The page's saved copies of artwork come back as blob URLs too (its
    * Settings → Storage → Artwork), which showed as "?" logos and avatars.
    * Off, every picture loads straight from its address.
@@ -279,6 +299,24 @@
       },
     }),
   });
+
+  /** The page's route, which the app reopens on its next launch. */
+  let lastRoute = null;
+  const route = () => {
+    if (location.hash === lastRoute) return;
+    lastRoute = location.hash;
+    send({ type: 'tvos-route', hash: location.hash });
+  };
+  for (const name of ['pushState', 'replaceState']) {
+    const original = history[name];
+    history[name] = function (...args) {
+      const result = original.apply(this, args);
+      route();
+      return result;
+    };
+  }
+  addEventListener('hashchange', route);
+  addEventListener('popstate', route);
 
   window.addEventListener('error', (e) =>
     send({ type: 'web-error', message: String(e.message || e.error) })

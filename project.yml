@@ -19,6 +19,8 @@ targets:
           - Info.plist
           - bridge.js
           - Fonts
+          - "*.entitlements"
+      - path: Shared
       - path: AIOStreamsTV/bridge.js
         buildPhase: resources
       # A folder in the app, for libass to read the subtitle font from.
@@ -30,6 +32,7 @@ targets:
         PRODUCT_NAME: AIOStreamsTV
         PRODUCT_BUNDLE_IDENTIFIER: io.github.aiostreamstv.app
         INFOPLIST_FILE: AIOStreamsTV/Info.plist
+        CODE_SIGN_ENTITLEMENTS: AIOStreamsTV/AIOStreamsTV.entitlements
         GENERATE_INFOPLIST_FILE: NO
         CLANG_ENABLE_OBJC_ARC: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: App Icon & Top Shelf Image
@@ -38,4 +41,31 @@ targets:
         CODE_SIGN_STYLE: Automatic
         # WebKit is loaded at runtime; nothing links against it.
         GCC_WARN_UNDECLARED_SELECTOR: NO
+    dependencies:
+      - target: TopShelf
+      - sdk: TVServices.framework
     scheme: {}
+
+  # Continue Watching on the Home Screen's Top Shelf, from what the app saves
+  # in the App Group they share.
+  TopShelf:
+    type: app-extension
+    platform: tvOS
+    sources:
+      - path: TopShelf
+        excludes:
+          - Info.plist
+          - "*.entitlements"
+      - path: Shared
+    dependencies:
+      - sdk: TVServices.framework
+    settings:
+      base:
+        PRODUCT_NAME: TopShelf
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.aiostreamstv.app.TopShelf
+        INFOPLIST_FILE: TopShelf/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: TopShelf/TopShelf.entitlements
+        CLANG_ENABLE_OBJC_ARC: YES
+        TARGETED_DEVICE_FAMILY: 3
+        CODE_SIGN_STYLE: Automatic

@@ -1,6 +1,10 @@
 #import "RootViewController.h"
 
+#import <Network/Network.h>
+#import <TVServices/TVServices.h>
 #import <objc/message.h>
+
+#import "AIOShared.h"
 
 #import "AIOMPVPlayer.h"
 #import "AIONowPlaying.h"
@@ -9,6 +13,10 @@
 #import "AIOWebView.h"
 
 static NSString *const kServerKey = @"serverURL";
+/** The page's route for the server it was on, which a launch goes back to. */
+static NSString *const kRouteKey = @"lastRoute";
+/** Waits before trying an unreachable server again, the last repeating. */
+static const NSTimeInterval kRetryDelays[] = { 3, 5, 10, 20, 30 };
 /** The page's localStorage by origin, which tvOS may not keep for the web view. */
 static NSString *const kStorageKey = @"webStorage";
 /** tvOS keeps an app's settings to well under a megabyte, so the copy stays small. */
@@ -73,6 +81,18 @@ static const CGFloat kSwipeStepY = 150;
 @property (nonatomic, strong, nullable) NSTimer *menuHold;
 @property (nonatomic) BOOL menuOpened;
 @property (nonatomic) CGPoint swipeAnchor;
+
+// Reaching the server.
+@property (nonatomic) NSUInteger retries;
+@property (nonatomic, strong, nullable) NSTimer *retryTimer;
+@property (nonatomic) BOOL loadFailed;
+@property (nonatomic, strong, nullable) nw_path_monitor_t pathMonitor;
+/** The first load goes back to the route the page was on last time. */
+@property (nonatomic) BOOL restoredRoute;
+
+// `aiostreams://` links, held until the page says it listens.
+@property (nonatomic, strong) NSMutableArray<NSString *> *pendingLinks;
+@property (nonatomic) BOOL linksReady;
 @end
 
 @implementation RootViewController
@@ -110,6 +130,7 @@ static const CGFloat kSwipeStepY = 150;
         [weakSelf receive:message];
     };
     self.web.onLoadFinished = ^{
+        [weakSelf loadSucceeded];
         weakSelf.status.hidden = YES;
         [weakSelf.web focusPage];
     };
@@ -119,8 +140,10 @@ static const CGFloat kSwipeStepY = 150;
     };
     self.web.onLoadFailed = ^(NSString *error) {
         weakSelf.connected = NO;
-        [weakSelf showStatus:[NSString stringWithFormat:@"Couldn't reach AIOStreams.\n%@\n\nHold Play/Pause for options.", error]];
+        [weakSelf loadFailedWith:error];
     };
+    self.pendingLinks = [NSMutableArray array];
+    [self watchNetwork];
 
     if (!self.web.available) {
         [self showStatus:@"This version of tvOS has no web engine the app can use."];
@@ -239,13 +262,91 @@ static const CGFloat kSwipeStepY = 150;
 
 - (void)loadServer {
     NSURL *url = [self serverURL];
+    [self.retryTimer invalidate];
+    self.retryTimer = nil;
     if (!url) {
         [self showStatus:@"No AIOStreams address yet.\n\nHold Play/Pause to enter it."];
         return;
     }
     self.connected = NO;
+    self.linksReady = NO;
     [self showStatus:@"Loading AIOStreams…"];
-    [self.web loadURL:url];
+    [self.web loadURL:[self withSavedRoute:url]];
+}
+
+#pragma mark - Where the page was
+
+/** The address with the route the page was last on, on the first load of a launch. */
+- (NSURL *)withSavedRoute:(NSURL *)server {
+    if (self.restoredRoute) return server;
+    NSDictionary *saved = [NSUserDefaults.standardUserDefaults dictionaryForKey:kRouteKey];
+    NSString *hash = [saved[@"hash"] isKindOfClass:NSString.class] ? saved[@"hash"] : nil;
+    if (![saved[@"server"] isEqual:server.absoluteString] || ![hash hasPrefix:@"#/"]) return server;
+    // A link waiting to open goes where it says instead.
+    if (self.pendingLinks.count) return server;
+    NSURLComponents *parts = [NSURLComponents componentsWithURL:server resolvingAgainstBaseURL:NO];
+    parts.fragment = [hash substringFromIndex:1];
+    return parts.URL ?: server;
+}
+
+/** Saved as the page moves; the player and trailers are left out, as they'd start playing. */
+- (void)routeChanged:(NSString *)hash {
+    NSString *server = [self serverURL].absoluteString;
+    if (!server || ![hash isKindOfClass:NSString.class]) return;
+    if ([hash hasPrefix:@"#/play"]) return;
+    [NSUserDefaults.standardUserDefaults setObject:@{ @"server": server, @"hash": hash } forKey:kRouteKey];
+}
+
+#pragma mark - Reaching the server
+
+- (void)loadSucceeded {
+    self.restoredRoute = YES;
+    self.loadFailed = NO;
+    self.retries = 0;
+    [self.retryTimer invalidate];
+    self.retryTimer = nil;
+}
+
+/** Tries again by itself, sooner at first, and at once when the network comes back. */
+- (void)loadFailedWith:(NSString *)error {
+    self.loadFailed = YES;
+    NSUInteger count = sizeof(kRetryDelays) / sizeof(kRetryDelays[0]);
+    NSTimeInterval delay = kRetryDelays[MIN(self.retries, count - 1)];
+    self.retries++;
+    [self showStatus:[NSString stringWithFormat:
+        @"Couldn't reach AIOStreams.\n%@\n\nTrying again in %.0f seconds. Hold Play/Pause for options.", error, delay]];
+    [self.retryTimer invalidate];
+    __weak typeof(self) weakSelf = self;
+    self.retryTimer = [NSTimer scheduledTimerWithTimeInterval:delay repeats:NO block:^(NSTimer *timer) {
+        [weakSelf loadServer];
+    }];
+}
+
+- (void)watchNetwork {
+    nw_path_monitor_t monitor = nw_path_monitor_create();
+    __weak typeof(self) weakSelf = self;
+    nw_path_monitor_set_update_handler(monitor, ^(nw_path_t path) {
+        if (nw_path_get_status(path) != nw_path_status_satisfied) return;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (weakSelf.loadFailed) [weakSelf loadServer];
+        });
+    });
+    nw_path_monitor_set_queue(monitor, dispatch_get_main_queue());
+    nw_path_monitor_start(monitor);
+    self.pathMonitor = monitor;
+}
+
+#pragma mark - Links
+
+- (void)openLink:(NSURL *)url {
+    [self.pendingLinks addObject:url.absoluteString];
+    [self sendLinks];
+}
+
+- (void)sendLinks {
+    if (!self.linksReady) return;
+    for (NSString *link in self.pendingLinks) [self sendToPage:@{ @"type": @"link", @"url": link }];
+    [self.pendingLinks removeAllObjects];
 }
 
 - (void)askForServer {
@@ -399,6 +500,7 @@ static const CGFloat kSwipeStepY = 150;
 
     if ([type isEqualToString:@"hello"]) {
         self.connected = YES;
+        self.linksReady = NO;
         self.status.hidden = YES;
         [self.web focusPage];
     } else if ([type isEqualToString:@"app-info"]) {
@@ -429,6 +531,16 @@ static const CGFloat kSwipeStepY = 150;
         [self sendToPage:@{ @"type": @"diagnostics", @"text": text }];
     } else if ([type isEqualToString:@"exit"]) {
         [self leaveApp];
+    } else if ([type isEqualToString:@"links-ready"]) {
+        self.linksReady = YES;
+        [self sendLinks];
+    } else if ([type isEqualToString:@"tvos-route"]) {
+        [self routeChanged:message[@"hash"]];
+    } else if ([type isEqualToString:@"watch-next"]) {
+        // For the Top Shelf, which reads it from the App Group.
+        id items = message[@"items"];
+        [AIOShared saveWatchNext:[items isKindOfClass:NSArray.class] ? items : @[]];
+        [TVTopShelfContentProvider topShelfContentDidChange];
     } else if ([type isEqualToString:@"tvos-storage"]) {
         [self storageChanged:message];
     } else if ([type isEqualToString:@"tvos-keyboard"]) {

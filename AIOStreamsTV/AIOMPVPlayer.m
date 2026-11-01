@@ -5,6 +5,8 @@
 #import <CoreMedia/CoreMedia.h>
 #import <MPVKit/MPVKit.h>
 
+#import "AIOThumbnails.h"
+
 /** Positions and cache ranges go to the page at most this often, as on the desktop. */
 static const double kThrottleSeconds = 0.25;
 /** Picture subtitles keep their own size. */
@@ -46,6 +48,7 @@ static id AIOJSON(const char *text) {
 
 @interface AIOMPVPlayer ()
 @property (nonatomic, strong) AIOSampleBufferView *videoView;
+@property (nonatomic, strong) AIOThumbnails *thumbnails;
 /** Every libmpv call goes through here, never the main thread: mpv's video output waits on the main thread as it starts. */
 @property (nonatomic, strong) dispatch_queue_t queue;
 @property (nonatomic, assign) mpv_handle *mpv;
@@ -88,6 +91,12 @@ static void AIOSetFlagNow(mpv_handle *mpv, const char *name, BOOL on) {
     _autoSkips = @[];
     _pictureSubtitles = [NSSet set];
     _subtitleScale = 1;
+    _thumbnails = [AIOThumbnails new];
+    __weak typeof(self) weakSelf = self;
+    _thumbnails.send = ^(NSDictionary *message) {
+        AIOMPVPlayer *player = weakSelf;
+        if (player) player.send(message);
+    };
 
     _videoView = [[AIOSampleBufferView alloc] initWithFrame:host.bounds];
     _videoView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -228,6 +237,7 @@ static void AIOSet(mpv_handle *mpv, NSString *name, NSString *value) {
         self.mpv = NULL;
         if (mpv) mpv_terminate_destroy(mpv);
     });
+    [self.thumbnails stop];
     [self resetDisplayMode];
     [self.videoView removeFromSuperview];
 }
@@ -260,8 +270,8 @@ static void AIOSet(mpv_handle *mpv, NSString *name, NSString *value) {
     } else if ([type isEqualToString:@"player-stats-overlay"]) {
         [self showStats:AIOStr(message[@"page"])];
     } else if ([type isEqualToString:@"player-thumbnail"]) {
-        // No seek-bar thumbnails here; the page shows none.
-        self.send(@{ @"type": @"player-thumbnail", @"url": AIOStr(message[@"url"]) ?: @"", @"src": NSNull.null });
+        NSString *url = AIOStr(message[@"url"]);
+        if (url) [self.thumbnails want:url headers:message[@"headers"] positionMs:AIONum(message[@"positionMs"])];
     } else if ([type isEqualToString:@"player-subtitle-index"]) {
         self.send(@{ @"type": @"player-subtitle-index", @"tracks": NSNull.null });
     } else if ([type hasPrefix:@"player-"]) {
@@ -368,6 +378,7 @@ static BOOL AIOSafeHeader(NSString *name, NSString *value) {
         self.playing = NO;
         AIOCommand(handle, @[ @"stop" ]);
     }];
+    [self.thumbnails stop];
     self.videoView.hidden = YES;
     [self resetDisplayMode];
 }

@@ -4,7 +4,8 @@ name: Build
 # goes up across nightly and stable builds.
 on:
   push:
-    branches: [main]
+    # check/* branches only build, to see that a change compiles; nothing is released.
+    branches: [main, 'check/**']
     tags: ['v*']
   workflow_dispatch:
 
@@ -105,6 +106,17 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-appletvos/AIOStreamsTV.app Payload/
+          # Unsigned builds carry no entitlements, and the sideloading tool registers
+          # the App Group the app and its Top Shelf share from them: an ad-hoc
+          # signature holds them until it signs the app for real.
+          for framework in Payload/AIOStreamsTV.app/Frameworks/*.framework; do
+            codesign --force --sign - "$framework"
+          done
+          codesign --force --sign - --entitlements TopShelf/TopShelf.entitlements \
+            Payload/AIOStreamsTV.app/PlugIns/TopShelf.appex
+          codesign --force --sign - --entitlements AIOStreamsTV/AIOStreamsTV.entitlements \
+            Payload/AIOStreamsTV.app
+          codesign -d --entitlements - Payload/AIOStreamsTV.app/PlugIns/TopShelf.appex
           plist=Payload/AIOStreamsTV.app/Info.plist
           short="$(plutil -extract CFBundleShortVersionString raw "$plist")"
           number="$(plutil -extract CFBundleVersion raw "$plist")"
