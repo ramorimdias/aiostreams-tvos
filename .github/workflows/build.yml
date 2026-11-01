@@ -1,5 +1,7 @@
 name: Build
 
+# One workflow for both channels, so run_number (the build number) only ever
+# goes up across nightly and stable builds.
 on:
   push:
     branches: [main]
@@ -12,8 +14,38 @@ permissions:
 jobs:
   build:
     runs-on: macos-15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build: ${{ steps.version.outputs.build }}
+      ipa: ${{ steps.version.outputs.ipa }}
     steps:
       - uses: actions/checkout@v4
+
+      # Stable: X.Y.Z from the vX.Y.Z tag. Nightly: MARKETING_VERSION in
+      # project.yml, the next planned version. The build number is the run number.
+      - name: Version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            if [[ ! "$GITHUB_REF_NAME" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              echo "::error::Tag $GITHUB_REF_NAME is not v<int>.<int>.<int>"
+              exit 1
+            fi
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$(sed -n 's/^ *MARKETING_VERSION: *\([^ ]*\) *$/\1/p' project.yml | head -1)"
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::MARKETING_VERSION in project.yml is '$version', not <int>.<int>.<int>"
+              exit 1
+            fi
+          fi
+          build="${{ github.run_number }}"
+          {
+            echo "version=$version"
+            echo "build=$build"
+            echo "ipa=AIOStreamsTV-$version-$build.ipa"
+          } >> "$GITHUB_OUTPUT"
+          echo "Version $version, build $build"
 
       - name: Tools
         run: |
@@ -39,31 +71,98 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
+            MARKETING_VERSION="${{ steps.version.outputs.version }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build }}" \
             | tee build.log | xcbeautify || (tail -200 build.log; exit 1)
 
       - name: Package
+        env:
+          IPA: ${{ steps.version.outputs.ipa }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ steps.version.outputs.build }}
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-appletvos/AIOStreamsTV.app Payload/
-          zip -qry AIOStreamsTV.ipa Payload
-          # What tvOS reads for the icon and the Top Shelf.
-          plutil -p Payload/AIOStreamsTV.app/Info.plist | sed -n '/CFBundleIcons/,/^  }/p;/TVTopShelf/,/^  }/p'
-          ls Payload/AIOStreamsTV.app | grep -i -E "car|png" || true
-          ls -lh AIOStreamsTV.ipa
+          plist=Payload/AIOStreamsTV.app/Info.plist
+          short="$(plutil -extract CFBundleShortVersionString raw "$plist")"
+          number="$(plutil -extract CFBundleVersion raw "$plist")"
+          id="$(plutil -extract CFBundleIdentifier raw "$plist")"
+          echo "CFBundleShortVersionString=$short CFBundleVersion=$number CFBundleIdentifier=$id"
+          # The updater relies on these; a mismatch must not ship.
+          [[ "$short" == "$VERSION" && "$number" == "$BUILD" && "$id" == "io.github.aiostreamstv.app" ]] || {
+            echo "::error::Info.plist doesn't match the version, build or bundle id"
+            exit 1
+          }
+          zip -qry "$IPA" Payload
+          ls -lh "$IPA"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AIOStreamsTV-ipa
-          path: AIOStreamsTV.ipa
+          name: ipa
+          path: ${{ steps.version.outputs.ipa }}
+          if-no-files-found: error
 
-      # Every build on main replaces the files of the "latest" release; a v* tag gets its own.
-      - name: Release
-        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+  # Every push to main: the "nightly" prerelease, recreated so its tag points
+  # at the commit built and it holds only the newest IPA.
+  nightly:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: nightly
+      cancel-in-progress: true
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.build.outputs.version }}
+      BUILD: ${{ needs.build.outputs.build }}
+    steps:
+      - uses: actions/download-artifact@v4
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'latest' }}
-          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'Latest build' }}
-          body: Unsigned build of ${{ github.sha }}. Sideload AIOStreamsTV.ipa with atvloadly or Sideloadly.
-          target_commitish: ${{ github.sha }}
-          make_latest: true
-          files: AIOStreamsTV.ipa
+          name: ipa
+
+      - name: Publish
+        run: |
+          # A slower run finishing after a newer push mustn't put an older build back.
+          head="$(gh api "repos/$GH_REPO/commits/main" --jq .sha)"
+          if [[ "$head" != "$GITHUB_SHA" ]]; then
+            echo "main has moved on to $head; leaving nightly to that run"
+            exit 0
+          fi
+          gh release delete nightly --cleanup-tag --yes || true
+          gh release create nightly AIOStreamsTV-*.ipa \
+            --prerelease \
+            --latest=false \
+            --target "$GITHUB_SHA" \
+            --title "Nightly $VERSION ($BUILD)" \
+            --notes "Nightly build $BUILD of $GITHUB_SHA. Unsigned; sideload with ATVLoadly or Sideloadly."
+
+      # The rolling release the nightly replaces.
+      - name: Remove the old "latest" release
+        run: gh release delete latest --cleanup-tag --yes || true
+
+  # A vX.Y.Z tag: a permanent release of its own, never overwritten.
+  stable:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BUILD: ${{ needs.build.outputs.build }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ipa
+
+      - name: Publish
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "::error::Release $GITHUB_REF_NAME already exists; stable releases are never replaced"
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" AIOStreamsTV-*.ipa \
+            --verify-tag \
+            --latest \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Build $BUILD of $GITHUB_SHA. Unsigned; sideload with ATVLoadly or Sideloadly."

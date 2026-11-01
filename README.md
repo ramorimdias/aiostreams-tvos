@@ -30,12 +30,21 @@ Clicking a text field opens the tvOS keyboard (dictation works there too).
 
 ## Build with GitHub Actions
 
-1. Push this folder to `main` of a GitHub repository.
-2. Each push to `main` builds `AIOStreamsTV.ipa` (unsigned) and puts it on the **Latest build**
-   release, at `releases/latest/download/AIOStreamsTV.ipa`. A `v*` tag gets a release of its own.
+The workflow generates the Xcode project with XcodeGen, installs MPVKit and TVVLCKit with
+CocoaPods, and builds without signing. Nothing needs a Mac.
 
-The workflow generates the Xcode project with XcodeGen, installs TVVLCKit with CocoaPods, and
-builds without signing. Nothing needs a Mac.
+Every build's number (`CFBundleVersion`) is the workflow's run number, so it only goes up, and
+its IPA is named `AIOStreamsTV-<version>-<build>.ipa`. The bundle id stays
+`io.github.aiostreamstv.app`.
+
+### Releases
+
+- **Nightly:** each push to `main` replaces the `nightly` prerelease, whose tag points at the
+  commit built and which holds only the newest IPA. It carries `MARKETING_VERSION` from
+  `project.yml`, the next planned version.
+- **Stable:** `git tag vX.Y.Z && git push --tags` builds version `X.Y.Z` into a release of its own,
+  marked latest and never replaced. Then bump `MARKETING_VERSION` in `project.yml` to the next
+  planned version.
 
 ## Install on the Apple TV
 
