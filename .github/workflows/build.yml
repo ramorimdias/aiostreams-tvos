@@ -46,6 +46,9 @@ jobs:
           mkdir -p Payload
           cp -R build/Build/Products/Release-appletvos/AIOStreamsTV.app Payload/
           zip -qry AIOStreamsTV.ipa Payload
+          # What tvOS reads for the icon and the Top Shelf.
+          plutil -p Payload/AIOStreamsTV.app/Info.plist | sed -n '/CFBundleIcons/,/^  }/p;/TVTopShelf/,/^  }/p'
+          ls Payload/AIOStreamsTV.app | grep -i -E "car|png" || true
           ls -lh AIOStreamsTV.ipa
 
       - uses: actions/upload-artifact@v4
