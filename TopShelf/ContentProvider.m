@@ -69,10 +69,15 @@ static NSURL *AIOItemLink(NSString *itemId, NSString *playLink) {
 
         double position = [saved[@"positionMs"] doubleValue];
         double duration = [saved[@"durationMs"] doubleValue];
-        item.contextTitle = position > 0 ? @"Continue Watching" : @"Next Up";
-        if (duration > 0) {
-            item.duration = duration / 1000;
-            if (position > 0) item.playbackProgress = MIN(1, position / duration);
+        // The carousel has no progress bar, so the time left goes in its label.
+        if (duration > 0) item.duration = duration / 1000;
+        if (position > 0 && duration > position) {
+            long minutes = lround((duration - position) / 60000);
+            item.contextTitle = minutes > 0
+                ? [NSString stringWithFormat:@"Continue Watching · %ld min left", minutes]
+                : @"Continue Watching";
+        } else {
+            item.contextTitle = position > 0 ? @"Continue Watching" : @"Next Up";
         }
 
         NSString *image = [saved[@"image"] isKindOfClass:NSString.class] ? saved[@"image"] : nil;
