@@ -29,7 +29,13 @@
   } catch {}
 
   const listeners = new Set();
-  const send = (message) => handler.postMessage(JSON.stringify(message));
+  /** Whether the page's player is open, from what the page tells the app. */
+  let inPlayer = false;
+  const send = (message) => {
+    if (message?.type === 'player-load') inPlayer = true;
+    else if (message?.type === 'player-stop') inPlayer = false;
+    handler.postMessage(JSON.stringify(message));
+  };
 
   /*
    * tvOS can drop a web view's stored data between launches, and with it the
@@ -118,11 +124,40 @@
   let editing = null;
   let swallowed = false;
 
+  /** A control the remote is on, as the page's own keyboardFocus() reads it. */
+  const keyboardFocus = () => {
+    const el = document.activeElement;
+    return (
+      el instanceof HTMLElement &&
+      el !== document.body &&
+      el.matches(':focus-visible') &&
+      !document.documentElement.hasAttribute('data-pointer-focus')
+    );
+  };
+  /*
+   * In the player with no control focused, the remote works as Apple's own
+   * player does: OK plays or pauses (Space, so holding it still speeds up)
+   * and Left/Right skip back and forward, rather than OK bringing focus to
+   * the controls first. Up/Down still bring the controls; the skip button,
+   * the next-episode card and any focused control keep their keys.
+   */
+  const PLAYER_KEYS = { Enter: ' ', ArrowLeft: 'MediaRewind', ArrowRight: 'MediaFastForward' };
+  const sent = new Map();
+  const playerKey = (name) => {
+    if (!inPlayer || !(name in PLAYER_KEYS) || keyboardFocus()) return name;
+    if (
+      name === 'Enter' &&
+      document.querySelector('[data-ui=skip-segment][data-visible]')
+    )
+      return name;
+    return PLAYER_KEYS[name];
+  };
+
   const key = (type, name, repeat) =>
     target().dispatchEvent(
       new KeyboardEvent(type, {
         key: name,
-        code: name,
+        code: name === ' ' ? 'Space' : name,
         repeat: !!repeat,
         bubbles: true,
         cancelable: true,
@@ -157,14 +192,19 @@
           });
           return;
         }
-        key('keydown', name, repeat);
+        // A held key repeats as whatever it went down as.
+        const as = repeat && sent.has(name) ? sent.get(name) : playerKey(name);
+        sent.set(name, as);
+        key('keydown', as, repeat);
       },
       up(name) {
         if (name === 'Enter' && swallowed) {
           swallowed = false;
           return;
         }
-        key('keyup', name);
+        const as = sent.get(name) ?? name;
+        sent.delete(name);
+        key('keyup', as);
       },
       /** The text typed on the app's keyboard, for the field it was opened for. */
       type(value, submit) {

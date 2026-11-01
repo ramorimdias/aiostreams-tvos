@@ -32,6 +32,9 @@ static const CGFloat kSwipeStepY = 150;
 /** The page has said hello, so it takes Back. */
 @property (nonatomic) BOOL connected;
 @property (nonatomic) BOOL pageFullscreen;
+/** A video is open and not paused, which keeps the screensaver off. */
+@property (nonatomic) BOOL videoOpen;
+@property (nonatomic) BOOL videoPaused;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSString *> *> *webStorage;
 
 @property (nonatomic, strong, nullable) NSTimer *repeat;
@@ -317,7 +320,27 @@ static const CGFloat kSwipeStepY = 150;
     return data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : @"\"\"";
 }
 
+/** The screensaver stays off while a video plays, and comes back once it pauses or closes. */
+- (void)followPlayback:(NSDictionary *)message {
+    NSString *type = message[@"type"];
+    if ([type isEqualToString:@"player-state"]) {
+        if ([message[@"paused"] isKindOfClass:NSNumber.class]) self.videoPaused = [message[@"paused"] boolValue];
+        if ([message[@"idle"] isEqual:@YES]) self.videoOpen = NO;
+        if ([message[@"idle"] isEqual:@NO]) self.videoOpen = YES;
+    } else if ([type isEqualToString:@"player-ended"]) {
+        self.videoOpen = NO;
+    } else if ([type isEqualToString:@"player-load"]) {
+        self.videoOpen = YES;
+    } else if ([type isEqualToString:@"player-stop"]) {
+        self.videoOpen = NO;
+    } else {
+        return;
+    }
+    UIApplication.sharedApplication.idleTimerDisabled = self.videoOpen && !self.videoPaused;
+}
+
 - (void)sendToPage:(NSDictionary *)message {
+    [self followPlayback:message];
     NSData *data = [NSJSONSerialization dataWithJSONObject:message options:0 error:nil];
     if (!data) return;
     NSString *json = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
@@ -330,6 +353,7 @@ static const CGFloat kSwipeStepY = 150;
 
 - (void)receive:(NSDictionary *)message {
     NSString *type = [message[@"type"] isKindOfClass:NSString.class] ? message[@"type"] : @"";
+    [self followPlayback:message];
     if ([self.player handle:type message:message]) return;
 
     if ([type isEqualToString:@"hello"]) {
