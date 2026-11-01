@@ -18,6 +18,14 @@
   try {
     delete window.OffscreenCanvas;
   } catch {}
+  /*
+   * The page's saved copies of artwork come back as blob URLs too (its
+   * Settings → Storage → Artwork), which showed as "?" logos and avatars.
+   * Off, every picture loads straight from its address.
+   */
+  try {
+    localStorage.setItem('aiostreams-web-cache-artwork', 'false');
+  } catch {}
 
   const listeners = new Set();
   const send = (message) => handler.postMessage(JSON.stringify(message));
