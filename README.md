@@ -67,4 +67,4 @@ Pick your Apple TV as the destination and run. Safari's *Develop* menu can inspe
 - Not carried over from the Android app: seek-bar thumbnails, the player stats overlay, subtitle
   styling from the page, the mpv config editor, downloads and voice search.
 - tvOS may clear a web page's stored data when space runs low; you'd sign in again.
-- No app icon yet; tvOS shows a blank tile.
+- The icon and Top Shelf image are AIOStreams' own logo, from its `branding` folder.
