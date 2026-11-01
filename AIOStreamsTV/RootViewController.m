@@ -266,12 +266,16 @@ static const CGFloat kSwipeStepY = 150;
         field.secureTextEntry = [message[@"secure"] boolValue];
         if ([message[@"email"] boolValue]) field.keyboardType = UIKeyboardTypeEmailAddress;
         if ([message[@"url"] boolValue]) field.keyboardType = UIKeyboardTypeURL;
+        // A PIN gets the digits-only keyboard.
+        if ([message[@"numeric"] boolValue]) field.keyboardType = UIKeyboardTypeNumberPad;
         field.autocorrectionType = UITextAutocorrectionTypeNo;
     }];
     __weak UIAlertController *weakAlert = alert;
     [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         NSString *text = weakAlert.textFields.firstObject.text ?: @"";
-        [self callTV:[NSString stringWithFormat:@"type(%@,false)", [self jsonString:text]]];
+        // A PIN is the last thing its form asks for, so Done sends it.
+        BOOL submit = [message[@"numeric"] boolValue];
+        [self callTV:[NSString stringWithFormat:@"type(%@,%@)", [self jsonString:text], submit ? @"true" : @"false"]];
         [self.web focusPage];
     }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {

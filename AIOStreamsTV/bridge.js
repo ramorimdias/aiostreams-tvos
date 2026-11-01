@@ -10,6 +10,15 @@
   const handler = window.webkit?.messageHandlers?.aiostreamsNative;
   if (!handler) return;
 
+  /*
+   * Artwork otherwise goes through workers that shrink it on OffscreenCanvas
+   * and hand back blob URLs, which tvOS's WebKit shows as broken images.
+   * Without OffscreenCanvas the page loads each picture as a plain <img>.
+   */
+  try {
+    delete window.OffscreenCanvas;
+  } catch {}
+
   const listeners = new Set();
   const send = (message) => handler.postMessage(JSON.stringify(message));
 
@@ -90,6 +99,11 @@
               '',
             secure: el.type === 'password',
             email: el.type === 'email',
+            numeric:
+              el.inputMode === 'numeric' ||
+              el.inputMode === 'decimal' ||
+              el.type === 'number' ||
+              el.type === 'tel',
             url: el.type === 'url',
           });
           return;
@@ -117,10 +131,13 @@
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
         el.focus();
-        if (submit && el.form) {
-          if (el.form.requestSubmit) el.form.requestSubmit();
-          else el.form.submit();
-        }
+        // After React has taken the new value.
+        const form = el.form;
+        if (submit && form)
+          setTimeout(() => {
+            if (form.requestSubmit) form.requestSubmit();
+            else form.submit();
+          }, 250);
       },
     }),
   });

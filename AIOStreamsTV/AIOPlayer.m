@@ -81,6 +81,15 @@ static BOOL AIOSameLanguage(NSString *a, NSString *b) {
 
 /** Stretches to skip on reaching them. */
 @property (nonatomic, copy) NSArray<NSDictionary *> *autoSkips;
+
+// What the page set, which a new player for the next file takes over.
+/** The page's volume, where 1 is full; VLC's 100. */
+@property (nonatomic) double volume;
+@property (nonatomic) BOOL muted;
+@property (nonatomic) float speed;
+/** VLC's subtitle look, from the page's `player-style`; changes apply from the next file. */
+@property (nonatomic, copy) NSArray<NSString *> *subtitleOptions;
+@property (nonatomic, copy, nullable) NSArray<NSString *> *playerOptions;
 @property (nonatomic) NSInteger audioDelayUs;
 @end
 
@@ -90,9 +99,10 @@ static BOOL AIOSameLanguage(NSString *a, NSString *b) {
     self = [super init];
     if (!self) return nil;
     _videoView = videoView;
-    _player = [[VLCMediaPlayer alloc] init];
-    _player.delegate = self;
-    _player.drawable = videoView;
+    _volume = 1;
+    _speed = 1;
+    _subtitleOptions = [AIOPlayer subtitleOptionsFor:nil];
+    [self makePlayer];
     _audioLanguages = @[];
     _subtitleLanguages = @[];
     _subtitleMode = @"default";
@@ -103,6 +113,82 @@ static BOOL AIOSameLanguage(NSString *a, NSString *b) {
     _send = ^(NSDictionary *message) {};
     videoView.hidden = YES;
     return self;
+}
+
+/**
+ * VLC takes its subtitle look only as it starts, so a file with a different
+ * look gets a new player.
+ */
+- (void)makePlayer {
+    if (self.player && [self.playerOptions isEqualToArray:self.subtitleOptions]) return;
+    if (self.player) {
+        self.player.delegate = nil;
+        [self.player stop];
+    }
+    self.playerOptions = self.subtitleOptions;
+    self.player = [[VLCMediaPlayer alloc] initWithOptions:self.subtitleOptions];
+    self.player.delegate = self;
+    self.player.drawable = self.videoView;
+}
+
+/** What the page's volume, mute and speed come to in VLC. */
+- (void)applyLevels {
+    self.player.audio.volume = (int)lround(MAX(0, MIN(2, self.volume)) * 100);
+    self.player.audio.muted = self.muted;
+    self.player.rate = self.speed > 0 ? self.speed : 1;
+}
+
+/** `#AARRGGBB` or `#RRGGBB` as VLC's RGB number and 0-255 opacity. */
+static BOOL AIOParseColor(NSString *text, int *rgb, int *alpha) {
+    if (![text hasPrefix:@"#"]) return NO;
+    NSString *hex = [text substringFromIndex:1];
+    unsigned int value = 0;
+    if (![[NSScanner scannerWithString:hex] scanHexInt:&value]) return NO;
+    if (hex.length == 8) {
+        *alpha = (value >> 24) & 0xff;
+        *rgb = value & 0xffffff;
+    } else if (hex.length == 6) {
+        *alpha = 255;
+        *rgb = value;
+    } else {
+        return NO;
+    }
+    return YES;
+}
+
+/**
+ * The page's subtitle look (sizes in mpv's units) as VLC's freetype options.
+ * VLC sizes text as a fraction of the video's height: a larger number is smaller text.
+ */
++ (NSArray<NSString *> *)subtitleOptionsFor:(nullable NSDictionary *)look {
+    double scale = [AIONumber(look[@"scale"]) doubleValue] ?: 1;
+    int relative = (int)lround(22 / MAX(0.5, MIN(2, scale)));
+    NSMutableArray *options = [NSMutableArray arrayWithObjects:
+        [NSString stringWithFormat:@"--freetype-rel-fontsize=%d", relative], nil];
+    if ([look[@"bold"] boolValue]) [options addObject:@"--freetype-bold"];
+
+    int rgb = 0, alpha = 0;
+    if (AIOParseColor(AIOString(look[@"color"]), &rgb, &alpha)) {
+        [options addObject:[NSString stringWithFormat:@"--freetype-color=%d", rgb]];
+        [options addObject:[NSString stringWithFormat:@"--freetype-opacity=%d", alpha]];
+    }
+    double outline = [AIONumber(look[@"outlineSize"]) doubleValue];
+    if (!look) outline = 1.65;
+    int thickness = outline <= 0 ? 0 : outline < 1.3 ? 2 : outline < 2.3 ? 4 : 6;
+    [options addObject:[NSString stringWithFormat:@"--freetype-outline-thickness=%d", thickness]];
+    if (AIOParseColor(AIOString(look[@"outlineColor"]), &rgb, &alpha)) {
+        [options addObject:[NSString stringWithFormat:@"--freetype-outline-color=%d", rgb]];
+        [options addObject:[NSString stringWithFormat:@"--freetype-outline-opacity=%d", alpha]];
+    }
+    if ([look[@"box"] boolValue] && AIOParseColor(AIOString(look[@"backColor"]), &rgb, &alpha)) {
+        [options addObject:[NSString stringWithFormat:@"--freetype-background-color=%d", rgb]];
+        [options addObject:[NSString stringWithFormat:@"--freetype-background-opacity=%d", alpha]];
+    } else {
+        [options addObject:@"--freetype-background-opacity=0"];
+    }
+    BOOL shadow = [AIONumber(look[@"shadowSize"]) doubleValue] > 0;
+    [options addObject:[NSString stringWithFormat:@"--freetype-shadow-opacity=%d", shadow ? 128 : 0]];
+    return options;
 }
 
 #pragma mark - Messages from the page
@@ -127,6 +213,9 @@ static BOOL AIOSameLanguage(NSString *a, NSString *b) {
         NSNumber *delay = AIONumber(message[@"audioDelayMs"]);
         self.audioDelayUs = (NSInteger)(delay.doubleValue * 1000);
         if (self.url) self.player.currentAudioPlaybackDelay = self.audioDelayUs;
+    } else if ([type isEqualToString:@"player-style"]) {
+        NSDictionary *look = [message[@"subtitles"] isKindOfClass:NSDictionary.class] ? message[@"subtitles"] : nil;
+        if (look) self.subtitleOptions = [AIOPlayer subtitleOptionsFor:look];
     } else if ([type isEqualToString:@"player-thumbnail"]) {
         // No seek-bar thumbnails here; the page shows none.
         self.send(@{ @"type": @"player-thumbnail", @"url": AIOString(message[@"url"]) ?: @"", @"src": NSNull.null });
@@ -152,6 +241,8 @@ static BOOL AIOSameLanguage(NSString *a, NSString *b) {
     }
     self.stopping = YES;
     [self.player stop];
+    [self makePlayer];
+    [self applyLevels];
     self.stopping = NO;
 
     self.url = urlString;
@@ -217,12 +308,14 @@ static BOOL AIOSameLanguage(NSString *a, NSString *b) {
             else [self.player play];
         }
     }
+    // The page's volume runs from 0 to its max, 1 being full, as mpv's 100.
     NSNumber *volume = AIONumber(message[@"volume"]);
-    if (volume) self.player.audio.volume = MAX(0, MIN(200, volume.intValue));
+    if (volume) self.volume = volume.doubleValue;
     NSNumber *muted = AIONumber(message[@"muted"]);
-    if (muted) self.player.audio.muted = muted.boolValue;
+    if (muted) self.muted = muted.boolValue;
     NSNumber *speed = AIONumber(message[@"speed"]);
-    if (speed && speed.floatValue > 0) self.player.rate = speed.floatValue;
+    if (speed && speed.floatValue > 0) self.speed = speed.floatValue;
+    if (volume || muted || speed) [self applyLevels];
     NSNumber *delay = AIONumber(message[@"subtitleDelayMs"]);
     if (delay) self.player.currentVideoSubTitleDelay = (NSInteger)(delay.doubleValue * 1000);
 
@@ -255,10 +348,10 @@ static BOOL AIOSameLanguage(NSString *a, NSString *b) {
         if (duration > 0) state[@"durationMs"] = @(duration);
         state[@"positionMs"] = @(MAX(0, self.player.time.intValue));
     }
-    state[@"volume"] = @(self.player.audio.volume);
-    state[@"maxVolume"] = @200;
-    state[@"muted"] = @(self.player.audio.muted);
-    state[@"speed"] = @(self.player.rate > 0 ? self.player.rate : 1);
+    state[@"volume"] = @(self.volume);
+    state[@"maxVolume"] = @2;
+    state[@"muted"] = @(self.muted);
+    state[@"speed"] = @(self.speed > 0 ? self.speed : 1);
     [self sendState:state];
     self.sentTracks = nil;
     if (self.url && self.loadedSent) [self sendTracksIfChanged];
@@ -347,6 +440,8 @@ static BOOL AIOSameLanguage(NSString *a, NSString *b) {
 
 - (void)fileLoaded {
     self.loadedSent = YES;
+    // VLC drops a volume set before its audio output opens.
+    [self applyLevels];
     self.player.currentAudioPlaybackDelay = self.audioDelayUs;
     [self pickTracks];
     [self sendTracksIfChanged];
