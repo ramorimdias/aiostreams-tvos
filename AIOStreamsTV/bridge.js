@@ -186,32 +186,58 @@
     el.dispatchEvent(new Event('input', { bubbles: true }));
   };
 
+  /** The app's keyboard, for a field: tvOS has none for a web page. */
+  const openKeyboard = (el) => {
+    editing = el;
+    lastPress = null;
+    send({
+      type: 'tvos-keyboard',
+      value: el.value || '',
+      label:
+        el.getAttribute('aria-label') ||
+        el.placeholder ||
+        el.labels?.[0]?.textContent?.trim() ||
+        '',
+      secure: el.type === 'password',
+      email: el.type === 'email',
+      numeric:
+        el.inputMode === 'numeric' ||
+        el.inputMode === 'decimal' ||
+        el.type === 'number' ||
+        el.type === 'tel',
+      url: el.type === 'url',
+    });
+  };
+
+  /*
+   * The search box takes focus as the Search page opens; after the press that
+   * opened it, the keyboard opens with it, rather than on a second press.
+   * Arriving with the arrows leaves it closed.
+   */
+  let lastPress = null;
+  document.addEventListener(
+    'focusin',
+    (e) => {
+      const el = e.target;
+      if (!isTextField(el) || el.type !== 'search' || editing) return;
+      if (lastPress?.name !== 'Enter' || Date.now() - lastPress.at > 3000) return;
+      setTimeout(() => {
+        if (document.activeElement === el && !editing) openKeyboard(el);
+      }, 0);
+    },
+    true
+  );
+
   Object.defineProperty(window, '__aioTV', {
     value: Object.freeze({
       down(name, repeat) {
         const el = target();
         // tvOS has no keyboard for a web page, so the app shows its own.
+        lastPress = { name, at: Date.now() };
         if (name === 'Enter' && isTextField(el)) {
           if (repeat) return;
-          editing = el;
           swallowed = true;
-          send({
-            type: 'tvos-keyboard',
-            value: el.value || '',
-            label:
-              el.getAttribute('aria-label') ||
-              el.placeholder ||
-              el.labels?.[0]?.textContent?.trim() ||
-              '',
-            secure: el.type === 'password',
-            email: el.type === 'email',
-            numeric:
-              el.inputMode === 'numeric' ||
-              el.inputMode === 'decimal' ||
-              el.type === 'number' ||
-              el.type === 'tel',
-            url: el.type === 'url',
-          });
+          openKeyboard(el);
           return;
         }
         // A held key repeats as whatever it went down as.
