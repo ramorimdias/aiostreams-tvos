@@ -1,7 +1,12 @@
 #import "AIOShared.h"
 
-/** The app's bundle id as built, and its App Group as declared. */
+/** The app's bundle id as built. */
 static NSString *const kBaseId = @"io.github.aiostreamstv.app";
+/**
+ * The App Group as declared in both entitlements. Not group.<bundle id>: Apple
+ * refused that name, with the team id added, as "not available".
+ */
+static NSString *const kGroup = @"group.io.github.aiostreamstv.shared";
 static NSString *const kWatchNextFile = @"watch-next.json";
 
 @implementation AIOShared
@@ -16,6 +21,7 @@ static NSString *const kWatchNextFile = @"watch-next.json";
     return bundle.bundleIdentifier ?: kBaseId;
 }
 
+/** Nil without the group, as when a signing tool couldn't register it: nothing is shared, and the app runs as usual. */
 + (NSURL *)container {
     static NSURL *found;
     static dispatch_once_t once;
@@ -24,12 +30,11 @@ static NSString *const kWatchNextFile = @"watch-next.json";
         NSMutableArray<NSString *> *names = [NSMutableArray array];
         NSString *prefix = [kBaseId stringByAppendingString:@"."];
         if ([app hasPrefix:prefix]) {
-            // Impactor (ATVLoadly) names the group group.<id>.<team>, the team being the id's suffix.
+            // Impactor (ATVLoadly) registers the group as <group>.<team>, the team being the id's suffix.
             NSString *team = [app substringFromIndex:prefix.length];
-            [names addObject:[NSString stringWithFormat:@"group.%@.%@", kBaseId, team]];
+            [names addObject:[NSString stringWithFormat:@"%@.%@", kGroup, team]];
         }
-        [names addObject:[@"group." stringByAppendingString:kBaseId]];
-        if (![app isEqualToString:kBaseId]) [names addObject:[@"group." stringByAppendingString:app]];
+        [names addObject:kGroup];
         for (NSString *name in names) {
             NSURL *url = [NSFileManager.defaultManager containerURLForSecurityApplicationGroupIdentifier:name];
             if (url) {
