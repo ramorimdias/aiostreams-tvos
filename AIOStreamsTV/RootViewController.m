@@ -30,6 +30,17 @@ static const CGFloat kSwipeStepY = 150;
 @end
 
 @implementation AIOKeyboardContainer
+/**
+ * Keeps the keyboard to the right half of the screen, top right, by making
+ * the left half off limits to its layout; the page's results show beside it.
+ */
+- (void)viewWillLayoutSubviews {
+    [super viewWillLayoutSubviews];
+    CGFloat half = floor(self.view.bounds.size.width / 2);
+    UIEdgeInsets inset = UIEdgeInsetsMake(0, half, 0, 0);
+    if (!UIEdgeInsetsEqualToEdgeInsets(self.additionalSafeAreaInsets, inset)) self.additionalSafeAreaInsets = inset;
+}
+
 - (void)viewDidDisappear:(BOOL)animated {
     [super viewDidDisappear:animated];
     if (self.isBeingDismissed && self.onClose) {
@@ -496,9 +507,9 @@ static const CGFloat kSwipeStepY = 150;
     if ([message[@"url"] boolValue]) search.searchBar.keyboardType = UIKeyboardTypeURL;
 
     AIOKeyboardContainer *container = [[AIOKeyboardContainer alloc] initWithSearchController:search];
-    // Over the page, so its results show beneath the keyboard.
+    // Over the page, so its results show beside the keyboard.
     container.modalPresentationStyle = UIModalPresentationOverFullScreen;
-    container.view.backgroundColor = [UIColor colorWithWhite:0 alpha:0.35];
+    container.view.backgroundColor = UIColor.clearColor;
     __weak typeof(self) weakSelf = self;
     container.onClose = ^{
         [weakSelf finishTyping];
