@@ -2,7 +2,7 @@ name: AIOStreamsTV
 options:
   bundleIdPrefix: io.github.aiostreamstv
   deploymentTarget:
-    tvOS: "17.0"
+    tvOS: "17.5"
 settings:
   base:
     MARKETING_VERSION: 0.1.0
