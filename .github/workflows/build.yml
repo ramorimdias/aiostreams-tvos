@@ -137,10 +137,6 @@ jobs:
             --title "Nightly $VERSION ($BUILD)" \
             --notes "Nightly build $BUILD of $GITHUB_SHA. Unsigned; sideload with ATVLoadly or Sideloadly."
 
-      # The rolling release the nightly replaces.
-      - name: Remove the old "latest" release
-        run: gh release delete latest --cleanup-tag --yes || true
-
   # A vX.Y.Z tag: a permanent release of its own, never overwritten.
   stable:
     needs: build
