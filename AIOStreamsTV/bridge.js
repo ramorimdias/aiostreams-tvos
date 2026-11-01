@@ -141,6 +141,17 @@
    * the controls first. Up/Down still bring the controls; the skip button,
    * the next-episode card and any focused control keep their keys.
    */
+  /** Once the controls are drawn, the subtitles button (else audio) takes focus. */
+  const focusSubtitles = (tries = 10) => {
+    const button = ['subtitles', 'audio']
+      .map((n) => document.querySelector(`[data-ui=player-controls] button[data-name=${n}]`))
+      .find((el) => el && el.getClientRects().length);
+    if (button) {
+      button.focus({ preventScroll: true, focusVisible: true });
+      return;
+    }
+    if (tries > 0) setTimeout(() => focusSubtitles(tries - 1), 40);
+  };
   const PLAYER_KEYS = { Enter: ' ', ArrowLeft: 'MediaRewind', ArrowRight: 'MediaFastForward' };
   const sent = new Map();
   const playerKey = (name) => {
@@ -163,6 +174,17 @@
         cancelable: true,
       })
     );
+
+  const setValue = (el, value) => {
+    if (el.value === value) return;
+    const proto =
+      el.tagName === 'TEXTAREA'
+        ? HTMLTextAreaElement.prototype
+        : HTMLInputElement.prototype;
+    // React tracks the value it last set, so set it as the browser would.
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  };
 
   Object.defineProperty(window, '__aioTV', {
     value: Object.freeze({
@@ -195,7 +217,10 @@
         // A held key repeats as whatever it went down as.
         const as = repeat && sent.has(name) ? sent.get(name) : playerKey(name);
         sent.set(name, as);
+        const toSubtitles = name === 'ArrowDown' && !repeat && inPlayer && !keyboardFocus();
         key('keydown', as, repeat);
+        // Down brings the controls with the subtitles button picked out, not opened.
+        if (toSubtitles) focusSubtitles();
       },
       up(name) {
         if (name === 'Enter' && swallowed) {
@@ -206,18 +231,16 @@
         sent.delete(name);
         key('keyup', as);
       },
+      /** Each change on the app's search keyboard, as it is typed. */
+      live(value) {
+        if (editing?.isConnected) setValue(editing, value);
+      },
       /** The text typed on the app's keyboard, for the field it was opened for. */
       type(value, submit) {
         const el = editing;
         editing = null;
         if (!el || !el.isConnected) return;
-        const proto =
-          el.tagName === 'TEXTAREA'
-            ? HTMLTextAreaElement.prototype
-            : HTMLInputElement.prototype;
-        // React tracks the value it last set, so set it as the browser would.
-        Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
-        el.dispatchEvent(new Event('input', { bubbles: true }));
+        setValue(el, value);
         el.dispatchEvent(new Event('change', { bubbles: true }));
         el.focus();
         // After React has taken the new value.

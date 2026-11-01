@@ -3,6 +3,7 @@
 #import <objc/message.h>
 
 #import "AIOMPVPlayer.h"
+#import "AIONowPlaying.h"
 #import "AIOPlayerEngine.h"
 #import "AIOVLCPlayer.h"
 #import "AIOWebView.h"
@@ -23,7 +24,26 @@ static const NSTimeInterval kRepeatEvery = 0.11;
 static const CGFloat kSwipeStepX = 190;
 static const CGFloat kSwipeStepY = 150;
 
-@interface RootViewController ()
+/** The search keyboard, which says when it goes away. */
+@interface AIOKeyboardContainer : UISearchContainerViewController
+@property (nonatomic, copy, nullable) void (^onClose)(void);
+@end
+
+@implementation AIOKeyboardContainer
+- (void)viewDidDisappear:(BOOL)animated {
+    [super viewDidDisappear:animated];
+    if (self.isBeingDismissed && self.onClose) {
+        void (^close)(void) = self.onClose;
+        self.onClose = nil;
+        close();
+    }
+}
+@end
+
+@interface RootViewController () <UISearchResultsUpdating, UISearchBarDelegate>
+@property (nonatomic, strong) AIONowPlaying *nowPlaying;
+/** The text on the open search keyboard, which goes into the page as it changes. */
+@property (nonatomic, copy, nullable) NSString *typed;
 @property (nonatomic, strong) UIView *videoView;
 @property (nonatomic, strong) AIOWebView *web;
 @property (nonatomic, strong) id<AIOPlayerEngine> player;
@@ -71,6 +91,10 @@ static const CGFloat kSwipeStepY = 150;
 
     [self makePlayer];
     __weak typeof(self) weakSelf = self;
+    self.nowPlaying = [AIONowPlaying new];
+    self.nowPlaying.send = ^(NSDictionary *message) {
+        [weakSelf sendToPage:message];
+    };
     self.web.onMessage = ^(NSDictionary *message) {
         [weakSelf receive:message];
     };
@@ -323,7 +347,13 @@ static const CGFloat kSwipeStepY = 150;
 /** The screensaver stays off while a video plays, and comes back once it pauses or closes. */
 - (void)followPlayback:(NSDictionary *)message {
     NSString *type = message[@"type"];
+    if ([type isEqualToString:@"now-playing"]) {
+        id item = message[@"item"];
+        [self.nowPlaying setItem:[item isKindOfClass:NSDictionary.class] ? item : nil];
+        return;
+    }
     if ([type isEqualToString:@"player-state"]) {
+        [self.nowPlaying playerState:message];
         if ([message[@"paused"] isKindOfClass:NSNumber.class]) self.videoPaused = [message[@"paused"] boolValue];
         if ([message[@"idle"] isEqual:@YES]) self.videoOpen = NO;
         if ([message[@"idle"] isEqual:@NO]) self.videoOpen = YES;
@@ -408,6 +438,11 @@ static const CGFloat kSwipeStepY = 150;
 
 - (void)showKeyboard:(NSDictionary *)message {
     if (self.presentedViewController) return;
+    // Plain text goes into the page as it is typed; passwords and PINs keep the confirm box.
+    if (![message[@"secure"] boolValue] && ![message[@"numeric"] boolValue]) {
+        [self showLiveKeyboard:message];
+        return;
+    }
     NSString *label = [message[@"label"] isKindOfClass:NSString.class] ? message[@"label"] : @"";
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:label.length ? label : @"Enter text"
                                                                    message:nil
@@ -436,6 +471,58 @@ static const CGFloat kSwipeStepY = 150;
         // Straight to the keyboard rather than the alert's field.
         [weakAlert.textFields.firstObject becomeFirstResponder];
     }];
+}
+
+/**
+ * tvOS's own search keyboard over the page, each change going straight into
+ * the page's field, so its results update while typing. Menu or Done closes it.
+ */
+- (void)showLiveKeyboard:(NSDictionary *)message {
+    NSString *label = [message[@"label"] isKindOfClass:NSString.class] ? message[@"label"] : @"";
+    NSString *value = [message[@"value"] isKindOfClass:NSString.class] ? message[@"value"] : @"";
+    self.typed = value;
+
+    UIViewController *results = [UIViewController new];
+    results.view.backgroundColor = UIColor.clearColor;
+    UISearchController *search = [[UISearchController alloc] initWithSearchResultsController:results];
+    search.searchResultsUpdater = self;
+    search.obscuresBackgroundDuringPresentation = NO;
+    search.searchBar.delegate = self;
+    search.searchBar.text = value;
+    search.searchBar.placeholder = label.length ? label : @"Search";
+    search.searchBar.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    search.searchBar.autocorrectionType = UITextAutocorrectionTypeNo;
+    if ([message[@"email"] boolValue]) search.searchBar.keyboardType = UIKeyboardTypeEmailAddress;
+    if ([message[@"url"] boolValue]) search.searchBar.keyboardType = UIKeyboardTypeURL;
+
+    AIOKeyboardContainer *container = [[AIOKeyboardContainer alloc] initWithSearchController:search];
+    // Over the page, so its results show beneath the keyboard.
+    container.modalPresentationStyle = UIModalPresentationOverFullScreen;
+    container.view.backgroundColor = [UIColor colorWithWhite:0 alpha:0.35];
+    __weak typeof(self) weakSelf = self;
+    container.onClose = ^{
+        [weakSelf finishTyping];
+    };
+    [self presentViewController:container animated:YES completion:nil];
+}
+
+- (void)updateSearchResultsForSearchController:(UISearchController *)searchController {
+    NSString *text = searchController.searchBar.text ?: @"";
+    if ([text isEqualToString:self.typed]) return;
+    self.typed = text;
+    [self callTV:[NSString stringWithFormat:@"live(%@)", [self jsonString:text]]];
+}
+
+- (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+/** The keyboard closed: the field keeps what was typed, and the remote is back on the page. */
+- (void)finishTyping {
+    NSString *text = self.typed ?: @"";
+    self.typed = nil;
+    [self callTV:[NSString stringWithFormat:@"type(%@,false)", [self jsonString:text]]];
+    [self.web focusPage];
 }
 
 #pragma mark - Remote
