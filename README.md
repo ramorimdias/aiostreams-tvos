@@ -42,9 +42,10 @@ its IPA is named `AIOStreamsTV-<version>-<build>.ipa`. The bundle id stays
 - **Nightly:** each push to `main` replaces the `nightly` prerelease, whose tag points at the
   commit built and which holds only the newest IPA. It carries `MARKETING_VERSION` from
   `project.yml`, the next planned version.
-- **Stable:** `git tag vX.Y.Z && git push --tags` builds version `X.Y.Z` into a release of its own,
-  marked latest and never replaced. Then bump `MARKETING_VERSION` in `project.yml` to the next
-  planned version.
+- **Stable:** a commit on `main` titled `Release vX.Y.Z`, matching `MARKETING_VERSION`, builds
+  version `X.Y.Z` into release `vX.Y.Z` (the workflow makes the tag), marked latest and never
+  replaced. A pushed `vX.Y.Z` tag does the same. Then bump `MARKETING_VERSION` in `project.yml`
+  to the next planned version. That commit is a nightly build too.
 
 ## Install on the Apple TV
 

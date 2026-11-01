@@ -15,32 +15,54 @@ jobs:
   build:
     runs-on: macos-15
     outputs:
+      channel: ${{ steps.version.outputs.channel }}
+      tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
       build: ${{ steps.version.outputs.build }}
       ipa: ${{ steps.version.outputs.ipa }}
     steps:
       - uses: actions/checkout@v4
 
-      # Stable: X.Y.Z from the vX.Y.Z tag. Nightly: MARKETING_VERSION in
-      # project.yml, the next planned version. The build number is the run number.
+      # Stable: X.Y.Z from a vX.Y.Z tag, or from a commit on main titled
+      # "Release vX.Y.Z" (which must match project.yml). Nightly: MARKETING_VERSION
+      # in project.yml, the next planned version. The build number is the run number.
       - name: Version
         id: version
+        env:
+          TITLE: ${{ github.event.head_commit.message }}
         run: |
+          planned="$(sed -n 's/^ *MARKETING_VERSION: *\([^ ]*\) *$/\1/p' project.yml | head -1)"
+          if [[ ! "$planned" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::MARKETING_VERSION in project.yml is '$planned', not <int>.<int>.<int>"
+            exit 1
+          fi
+          title="${TITLE%%$'\n'*}"
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            if [[ ! "$GITHUB_REF_NAME" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               echo "::error::Tag $GITHUB_REF_NAME is not v<int>.<int>.<int>"
               exit 1
             fi
+            channel=stable
             version="${GITHUB_REF_NAME#v}"
-          else
-            version="$(sed -n 's/^ *MARKETING_VERSION: *\([^ ]*\) *$/\1/p' project.yml | head -1)"
-            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "::error::MARKETING_VERSION in project.yml is '$version', not <int>.<int>.<int>"
+          elif [[ "$GITHUB_REF" == refs/heads/main && "$title" =~ ^Release\ v ]]; then
+            if [[ ! "$title" =~ ^Release\ v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              echo "::error::'$title' is not 'Release v<int>.<int>.<int>'"
               exit 1
             fi
+            version="${BASH_REMATCH[1]}"
+            if [[ "$version" != "$planned" ]]; then
+              echo "::error::Releasing $version, but project.yml plans $planned"
+              exit 1
+            fi
+            channel=stable
+          else
+            channel=nightly
+            version="$planned"
           fi
           build="${{ github.run_number }}"
           {
+            echo "channel=$channel"
+            echo "tag=v$version"
             echo "version=$version"
             echo "build=$build"
             echo "ipa=AIOStreamsTV-$version-$build.ipa"
@@ -137,15 +159,17 @@ jobs:
             --title "Nightly $VERSION ($BUILD)" \
             --notes "Nightly build $BUILD of $GITHUB_SHA. Unsigned; sideload with ATVLoadly or Sideloadly."
 
-  # A vX.Y.Z tag: a permanent release of its own, never overwritten.
+  # A vX.Y.Z tag or a "Release vX.Y.Z" commit: a permanent release of its own,
+  # never overwritten. For a commit, the release makes the tag.
   stable:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: needs.build.outputs.channel == 'stable'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       BUILD: ${{ needs.build.outputs.build }}
+      TAG: ${{ needs.build.outputs.tag }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -153,12 +177,12 @@ jobs:
 
       - name: Publish
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "::error::Release $GITHUB_REF_NAME already exists; stable releases are never replaced"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::Release $TAG already exists; stable releases are never replaced"
             exit 1
           fi
-          gh release create "$GITHUB_REF_NAME" AIOStreamsTV-*.ipa \
-            --verify-tag \
+          gh release create "$TAG" AIOStreamsTV-*.ipa \
+            --target "$GITHUB_SHA" \
             --latest \
-            --title "$GITHUB_REF_NAME" \
+            --title "$TAG" \
             --notes "Build $BUILD of $GITHUB_SHA. Unsigned; sideload with ATVLoadly or Sideloadly."
