@@ -36,16 +36,6 @@ static const CGFloat kSwipeStepY = 150;
 @end
 
 @implementation AIOKeyboardContainer
-/**
- * Keeps the keyboard to the right half of the screen, top right, by making
- * the left half off limits to its layout; the page's results show beside it.
- */
-- (void)viewWillLayoutSubviews {
-    [super viewWillLayoutSubviews];
-    CGFloat half = floor(self.view.bounds.size.width / 2);
-    UIEdgeInsets inset = UIEdgeInsetsMake(0, half, 0, 0);
-    if (!UIEdgeInsetsEqualToEdgeInsets(self.additionalSafeAreaInsets, inset)) self.additionalSafeAreaInsets = inset;
-}
 
 - (void)viewDidDisappear:(BOOL)animated {
     [super viewDidDisappear:animated];
@@ -57,7 +47,45 @@ static const CGFloat kSwipeStepY = 150;
 }
 @end
 
+/**
+ * Shows the keyboard as a panel over the right half of the screen, so it sits
+ * top right with the page and its results in view to its left. tvOS lays the
+ * keyboard out across whatever it is given, so the panel's frame decides.
+ */
+@interface AIORightPanelPresentation : UIPresentationController
+@end
+
+@implementation AIORightPanelPresentation
+- (CGRect)frameOfPresentedViewInContainerView {
+    CGRect bounds = self.containerView.bounds;
+    CGFloat width = floor(bounds.size.width / 2);
+    return CGRectMake(CGRectGetMaxX(bounds) - width, 0, width, bounds.size.height);
+}
+
+- (BOOL)shouldRemovePresentersView {
+    return NO;
+}
+
+- (void)containerViewWillLayoutSubviews {
+    [super containerViewWillLayoutSubviews];
+    self.presentedView.frame = self.frameOfPresentedViewInContainerView;
+}
+@end
+
+@interface AIORightPanel : NSObject <UIViewControllerTransitioningDelegate>
+@end
+
+@implementation AIORightPanel
+- (UIPresentationController *)presentationControllerForPresentedViewController:(UIViewController *)presented
+                                                      presentingViewController:(UIViewController *)presenting
+                                                          sourceViewController:(UIViewController *)source {
+    return [[AIORightPanelPresentation alloc] initWithPresentedViewController:presented presentingViewController:presenting];
+}
+@end
+
 @interface RootViewController () <UISearchResultsUpdating, UISearchBarDelegate>
+/** Kept while the keyboard shows: a transitioning delegate isn't retained by what it presents. */
+@property (nonatomic, strong, nullable) AIORightPanel *rightPanel;
 @property (nonatomic, strong) AIONowPlaying *nowPlaying;
 /** The text on the open search keyboard, which goes into the page as it changes. */
 @property (nonatomic, copy, nullable) NSString *typed;
@@ -612,11 +640,14 @@ static const CGFloat kSwipeStepY = 150;
     if ([message[@"url"] boolValue]) search.searchBar.keyboardType = UIKeyboardTypeURL;
 
     AIOKeyboardContainer *container = [[AIOKeyboardContainer alloc] initWithSearchController:search];
-    // Over the page, so its results show beside the keyboard.
-    container.modalPresentationStyle = UIModalPresentationOverFullScreen;
-    container.view.backgroundColor = UIColor.clearColor;
+    // A panel on the right half, over the page, whose results show to its left.
+    self.rightPanel = [AIORightPanel new];
+    container.modalPresentationStyle = UIModalPresentationCustom;
+    container.transitioningDelegate = self.rightPanel;
+    container.view.backgroundColor = [UIColor colorWithWhite:0.06 alpha:0.85];
     __weak typeof(self) weakSelf = self;
     container.onClose = ^{
+        weakSelf.rightPanel = nil;
         [weakSelf finishTyping];
     };
     [self presentViewController:container animated:YES completion:nil];
