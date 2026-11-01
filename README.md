@@ -1,4 +1,4 @@
-# AIOStreams TV
+# AIOStreams web for tvOS
 
 AIOStreams' own web app on Apple TV, the way the official Android app does it: your server's
 page on top, drawing every screen and the player's controls, and mpv playing the video beneath it.
