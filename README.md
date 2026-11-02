@@ -76,7 +76,8 @@ Pick your Apple TV as the destination and run. Safari's *Develop* menu can inspe
   HDR10 and HLG to the TV. With *Match Content* on in the Apple TV's settings, the TV switches to
   the video's range and frame rate. Dolby Vision plays through its HDR10 base layer. VLC remains
   in the app menu as a fallback; it shows HDR as SDR.
-- Subtitles are drawn by libass with the bundled Noto Sans (SIL Open Font License).
+- Subtitles are drawn by libass in the bundled Inter, close to Apple's SF Pro, with Noto Sans as a
+  fallback (both SIL Open Font License).
 - MPVKit and VLCKit are GPL/LGPL, so builds of this app are for personal use.
 - Not carried over from the Android app: seek-bar thumbnails, the mpv config editor, downloads
   and voice search.

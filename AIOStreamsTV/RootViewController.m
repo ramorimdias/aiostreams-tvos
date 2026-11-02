@@ -91,8 +91,23 @@ static const CGFloat kSwipeStepY = 150;
 @property (nonatomic, copy, nullable) NSString *typed;
 @property (nonatomic, strong) UIView *videoView;
 @property (nonatomic, strong) AIOWebView *web;
+/** The player chosen in the menu. */
 @property (nonatomic, strong) id<AIOPlayerEngine> player;
+/** VLC, standing in for mpv on a file mpv couldn't play, until the next one. */
+@property (nonatomic, strong, nullable) id<AIOPlayerEngine> fallback;
+/** The one the page's player messages go to, and whose reports reach the page. */
+@property (nonatomic, weak, nullable) id<AIOPlayerEngine> active;
+/** What the page last asked of its player, for VLC to start from on a fallback. */
+@property (nonatomic, copy, nullable) NSDictionary *lastLoad;
+@property (nonatomic, strong) NSMutableDictionary *lastSet;
+@property (nonatomic, copy, nullable) NSDictionary *lastStyle;
+@property (nonatomic, copy, nullable) NSDictionary *lastSettings;
+@property (nonatomic, copy, nullable) NSDictionary *lastSkips;
+@property (nonatomic) double lastPositionMs;
+@property (nonatomic) BOOL fellBack;
 @property (nonatomic, strong) UILabel *status;
+/** The logo and a spinner while the page loads. */
+@property (nonatomic, strong) UIView *splash;
 
 /** The page has said hello, so it takes Back. */
 @property (nonatomic) BOOL connected;
@@ -145,6 +160,7 @@ static const CGFloat kSwipeStepY = 150;
     self.status.textAlignment = NSTextAlignmentCenter;
     self.status.numberOfLines = 0;
     [self.view addSubview:self.status];
+    [self buildSplash];
 
     [self makePlayer];
     __weak typeof(self) weakSelf = self;
@@ -201,8 +217,50 @@ static const CGFloat kSwipeStepY = 150;
 }
 
 - (void)showStatus:(NSString *)text {
+    [self hideSplash];
     self.status.text = text;
     self.status.hidden = NO;
+}
+
+- (void)buildSplash {
+    UIView *splash = [[UIView alloc] initWithFrame:self.view.bounds];
+    splash.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    splash.backgroundColor = [UIColor colorWithRed:7 / 255.0 green:7 / 255.0 blue:9 / 255.0 alpha:1];
+    splash.userInteractionEnabled = NO;
+    UIImageView *logo = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"SplashLogo"]];
+    logo.translatesAutoresizingMaskIntoConstraints = NO;
+    logo.contentMode = UIViewContentModeScaleAspectFit;
+    UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
+    spinner.color = [UIColor colorWithWhite:1 alpha:0.7];
+    spinner.translatesAutoresizingMaskIntoConstraints = NO;
+    [spinner startAnimating];
+    [splash addSubview:logo];
+    [splash addSubview:spinner];
+    [NSLayoutConstraint activateConstraints:@[
+        [logo.centerXAnchor constraintEqualToAnchor:splash.centerXAnchor],
+        [logo.centerYAnchor constraintEqualToAnchor:splash.centerYAnchor constant:-40],
+        [logo.widthAnchor constraintEqualToConstant:240],
+        [logo.heightAnchor constraintEqualToConstant:240],
+        [spinner.centerXAnchor constraintEqualToAnchor:splash.centerXAnchor],
+        [spinner.topAnchor constraintEqualToAnchor:logo.bottomAnchor constant:60],
+    ]];
+    [self.view addSubview:splash];
+    self.splash = splash;
+}
+
+- (void)showSplash {
+    self.status.hidden = YES;
+    self.splash.alpha = 1;
+    self.splash.hidden = NO;
+}
+
+- (void)hideSplash {
+    if (self.splash.hidden) return;
+    [UIView animateWithDuration:0.3 animations:^{
+        self.splash.alpha = 0;
+    } completion:^(BOOL finished) {
+        if (finished) self.splash.hidden = YES;
+    }];
 }
 
 /** A notice that clears itself. */
@@ -296,7 +354,7 @@ static const CGFloat kSwipeStepY = 150;
     }
     self.connected = NO;
     self.linksReady = NO;
-    [self showStatus:@"Loading AIOStreams…"];
+    [self showSplash];
     [self.web loadURL:[self withSavedRoute:url]];
 }
 
@@ -326,6 +384,7 @@ static const CGFloat kSwipeStepY = 150;
 #pragma mark - Reaching the server
 
 - (void)loadSucceeded {
+    [self hideSplash];
     self.restoredRoute = YES;
     self.loadFailed = NO;
     self.retries = 0;
@@ -431,23 +490,104 @@ static const CGFloat kSwipeStepY = 150;
     return [[NSUserDefaults.standardUserDefaults stringForKey:kEngineKey] isEqualToString:@"vlc"];
 }
 
+- (id<AIOPlayerEngine>)makeVLC {
+    UIView *view = [[UIView alloc] initWithFrame:self.videoView.bounds];
+    view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    view.backgroundColor = UIColor.blackColor;
+    view.userInteractionEnabled = NO;
+    [self.videoView addSubview:view];
+    return [[AIOVLCPlayer alloc] initWithVideoView:view];
+}
+
+/** Reports reach the page only from the player it is using. */
+- (void)connect:(id<AIOPlayerEngine>)engine {
+    __weak typeof(self) weakSelf = self;
+    __weak id<AIOPlayerEngine> weakEngine = engine;
+    engine.send = ^(NSDictionary *message) {
+        [weakSelf engine:weakEngine sent:message];
+    };
+}
+
 /** The chosen player, in a fresh view beneath the page. */
 - (void)makePlayer {
+    [self.fallback shutdown];
+    self.fallback = nil;
     [self.player shutdown];
-    if (self.usesVLC) {
-        UIView *view = [[UIView alloc] initWithFrame:self.videoView.bounds];
-        view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        view.backgroundColor = UIColor.blackColor;
-        view.userInteractionEnabled = NO;
-        [self.videoView addSubview:view];
-        self.player = [[AIOVLCPlayer alloc] initWithVideoView:view];
-    } else {
-        self.player = [[AIOMPVPlayer alloc] initWithHost:self.videoView];
+    self.player = self.usesVLC ? [self makeVLC] : [[AIOMPVPlayer alloc] initWithHost:self.videoView];
+    [self connect:self.player];
+    self.active = self.player;
+    if (!self.lastSet) self.lastSet = [NSMutableDictionary dictionary];
+}
+
+/** What the page asks of its player, kept to start VLC from, and sent to the one in use. */
+- (BOOL)routeToPlayer:(NSString *)type message:(NSDictionary *)message {
+    if (![type hasPrefix:@"player-"] && ![type isEqualToString:@"subtitle-file"]) return NO;
+    if ([type isEqualToString:@"player-load"]) {
+        // Each file starts on the chosen player again.
+        [self useChosenPlayer];
+        self.lastLoad = message;
+        self.lastPositionMs = [message[@"startMs"] isKindOfClass:NSNumber.class] ? [message[@"startMs"] doubleValue] : 0;
+        self.fellBack = NO;
+    } else if ([type isEqualToString:@"player-set"]) {
+        // Track ids differ between the players, so those stay out.
+        for (NSString *key in @[ @"paused", @"volume", @"muted", @"speed", @"subtitleDelayMs" ]) {
+            if (message[key]) self.lastSet[key] = message[key];
+        }
+    } else if ([type isEqualToString:@"player-style"]) {
+        self.lastStyle = message;
+    } else if ([type isEqualToString:@"player-settings"]) {
+        self.lastSettings = message;
+    } else if ([type isEqualToString:@"player-skips"]) {
+        self.lastSkips = message;
     }
-    __weak typeof(self) weakSelf = self;
-    self.player.send = ^(NSDictionary *message) {
-        [weakSelf sendToPage:message];
-    };
+    [self.active handle:type message:message];
+    if ([type isEqualToString:@"player-stop"]) {
+        self.lastLoad = nil;
+        [self useChosenPlayer];
+    }
+    return YES;
+}
+
+- (void)useChosenPlayer {
+    if (self.active == self.player) return;
+    [self.active handle:@"player-stop" message:@{ @"type": @"player-stop" }];
+    self.active = self.player;
+}
+
+- (void)engine:(id<AIOPlayerEngine>)engine sent:(NSDictionary *)message {
+    if (!engine || engine != self.active) return;
+    NSString *type = message[@"type"];
+    if ([type isEqualToString:@"player-state"] && [message[@"positionMs"] isKindOfClass:NSNumber.class]) {
+        self.lastPositionMs = [message[@"positionMs"] doubleValue];
+    }
+    // mpv couldn't play the file: VLC tries it, unless the link itself refused.
+    BOOL failed = [type isEqualToString:@"player-ended"] && [message[@"reason"] isEqual:@"error"];
+    BOOL linkRefused = message[@"status"] != nil;
+    if (failed && !linkRefused && !self.fellBack && self.lastLoad && [engine isKindOfClass:AIOMPVPlayer.class]) {
+        [self fallBackToVLC];
+        return;
+    }
+    [self sendToPage:message];
+}
+
+- (void)fallBackToVLC {
+    self.fellBack = YES;
+    if (!self.fallback) {
+        self.fallback = [self makeVLC];
+        [self connect:self.fallback];
+    }
+    [self.player handle:@"player-stop" message:@{ @"type": @"player-stop" }];
+    self.active = self.fallback;
+    [self flashStatus:@"mpv couldn't play this; trying VLC."];
+    for (NSDictionary *message in @[ self.lastSettings ?: @{}, self.lastStyle ?: @{}, self.lastSkips ?: @{} ]) {
+        if ([message[@"type"] isKindOfClass:NSString.class]) [self.fallback handle:message[@"type"] message:message];
+    }
+    NSMutableDictionary *set = [self.lastSet mutableCopy];
+    set[@"type"] = @"player-set";
+    [self.fallback handle:@"player-set" message:set];
+    NSMutableDictionary *load = [self.lastLoad mutableCopy];
+    if (self.lastPositionMs > 0) load[@"startMs"] = @(self.lastPositionMs);
+    [self.fallback handle:@"player-load" message:load];
 }
 
 - (void)switchPlayer {
@@ -522,9 +662,10 @@ static const CGFloat kSwipeStepY = 150;
 - (void)receive:(NSDictionary *)message {
     NSString *type = [message[@"type"] isKindOfClass:NSString.class] ? message[@"type"] : @"";
     [self followPlayback:message];
-    if ([self.player handle:type message:message]) return;
+    if ([self routeToPlayer:type message:message]) return;
 
     if ([type isEqualToString:@"hello"]) {
+        [self hideSplash];
         self.connected = YES;
         self.linksReady = NO;
         self.status.hidden = YES;
@@ -574,7 +715,7 @@ static const CGFloat kSwipeStepY = 150;
 
 /** Back to the Home screen, as Menu on the first page does in other apps. */
 - (void)leaveApp {
-    [self.player pauseForBackground];
+    [self.active pauseForBackground];
     SEL suspend = NSSelectorFromString(@"suspend");
     UIApplication *app = UIApplication.sharedApplication;
     if ([app respondsToSelector:suspend]) ((void (*)(id, SEL))objc_msgSend)(app, suspend);
@@ -788,7 +929,7 @@ static const CGFloat kSwipeStepY = 150;
 - (void)appWillResignActive {
     [self saveWebStorage];
     [self stopRepeating];
-    [self.player pauseForBackground];
+    [self.active pauseForBackground];
 }
 
 - (void)appDidBecomeActive {

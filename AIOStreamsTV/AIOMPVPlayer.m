@@ -148,7 +148,11 @@ static void AIOSetFlagNow(mpv_handle *mpv, const char *name, BOOL on) {
         @"demuxer-max-bytes": @"150MiB",
         @"demuxer-max-back-bytes": @"50MiB",
         @"stream-lavf-o": @"reconnect=1,reconnect_on_http_error=%23%408,429,500,502,503,504,reconnect_delay_max=15",
-        @"sub-font": @"Noto Sans",
+        // Inter, close to Apple's SF Pro, which Apple's own player and Nuvio draw
+        // subtitles in; Noto Sans covers what it lacks. A slight blur softens the
+        // outline's edge, as Apple's does.
+        @"sub-font": @"Inter",
+        @"sub-blur": @"0.3",
         @"sub-scale-with-window": @"no",
         @"sub-use-margins": @"no",
     };
@@ -201,7 +205,7 @@ static void AIOWakeup(void *context) {
 
 - (NSString *)fontsDirectory {
     // Its own folder: libass reads in every file of the folder it's given.
-    NSString *font = [NSBundle.mainBundle pathForResource:@"NotoSans-Regular" ofType:@"ttf" inDirectory:@"Fonts"];
+    NSString *font = [NSBundle.mainBundle pathForResource:@"Inter-Medium" ofType:@"otf" inDirectory:@"Fonts"];
     if (!font) return nil;
     return font.stringByDeletingLastPathComponent;
 }
