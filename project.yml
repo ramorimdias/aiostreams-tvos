@@ -6,7 +6,7 @@ options:
 settings:
   base:
     # The next planned version: nightlies carry it; bump it after each stable release.
-    MARKETING_VERSION: 0.3.0
+    MARKETING_VERSION: 0.4.0
     # CI sets the build number to the run number; this is only for local builds.
     CURRENT_PROJECT_VERSION: 1
 targets:

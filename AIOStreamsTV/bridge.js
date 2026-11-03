@@ -51,9 +51,13 @@
   const listeners = new Set();
   /** Whether the page's player is open, from what the page tells the app. */
   let inPlayer = false;
+  /** A skip-segment press waiting for its seek to land; see playerKey. */
+  let skipped = null;
   const send = (message) => {
     if (message?.type === 'player-load') inPlayer = true;
     else if (message?.type === 'player-stop') inPlayer = false;
+    if (message?.type === 'player-seek' && skipped && skipped.toMs == null)
+      skipped.toMs = Number(message.positionMs);
     handler.postMessage(JSON.stringify(message));
   };
 
@@ -100,6 +104,7 @@
   // The app calls this with each message for the page.
   Object.defineProperty(window, '__aioReceive', {
     value(message) {
+      if (skipped && message?.type === 'player-state') skipLanded(message);
       for (const listener of listeners) {
         try {
           listener(message);
@@ -193,14 +198,61 @@
   const visibleFocus = () => keyboardFocus() && shown(document.activeElement);
   /** Scrubbing paused through pictures, which OK plays from and the arrows step. */
   const scrubbing = () => !!document.querySelector('[data-ui=scrub-strip]');
+  /*
+   * The skip button stays until the seek past the segment lands, which over a
+   * slow stream takes a few seconds; OK pressed again then skipped a second
+   * time (and landed back where it was) instead of pausing. So OK plays and
+   * pauses from the press until the player is at the segment's end, and
+   * skips again if the seek never went out or the player gave up on it.
+   */
+  const SKIP_SEND_MS = 1500;
+  const SKIP_MAX_MS = 20000;
+  /** Seeks to keyframes, so it lands up to a second before the end. */
+  const SKIP_SLACK_MS = 2500;
+  const skipLanded = (state) => {
+    const s = skipped;
+    if (s.toMs == null) return;
+    if (typeof state.seeking === 'boolean') {
+      if (state.seeking) s.started = true;
+      else if (s.started && !s.near) skipped = null; // gave up: OK skips again
+    }
+    const at = Number(state.positionMs);
+    if (Number.isFinite(at) && at >= s.toMs - SKIP_SLACK_MS) {
+      s.near = true;
+      skipped = null;
+    }
+  };
+  const skipButton = () => document.querySelector('[data-ui=skip-segment]');
+  const skipPressed = (el) => {
+    skipped = { el, at: Date.now(), toMs: null, started: false, near: false };
+  };
+  const skipUsed = (el) => {
+    const s = skipped;
+    if (!s || !el || s.el !== el) return false;
+    const age = Date.now() - s.at;
+    if ((s.toMs == null && age > SKIP_SEND_MS) || age > SKIP_MAX_MS) {
+      skipped = null;
+      return false;
+    }
+    return true;
+  };
   const playerKey = (name) => {
     if (!inPlayer || !(name in PLAYER_KEYS)) return name;
-    if (visibleFocus() && !scrubbing()) return name;
-    if (
-      name === 'Enter' &&
-      document.querySelector('[data-ui=skip-segment][data-visible]')
-    )
+    const skip = skipButton();
+    if (name === 'Enter' && skipUsed(skip)) {
+      // Off the used button, so OK goes to play and pause.
+      if (skip.contains(document.activeElement)) document.activeElement.blur();
+      return PLAYER_KEYS[name];
+    }
+    const onSkip = !!skip && skip.contains(document.activeElement);
+    if (visibleFocus() && !scrubbing()) {
+      if (name === 'Enter' && onSkip) skipPressed(skip);
       return name;
+    }
+    if (name === 'Enter' && skip?.matches('[data-visible]')) {
+      skipPressed(skip);
+      return name;
+    }
     return PLAYER_KEYS[name];
   };
 
