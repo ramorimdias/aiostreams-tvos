@@ -174,8 +174,28 @@
   };
   const PLAYER_KEYS = { Enter: ' ', ArrowLeft: 'MediaRewind', ArrowRight: 'MediaFastForward' };
   const sent = new Map();
+  /** Whether the element can be seen, rather than faded out with the controls. */
+  const shown = (el) => {
+    let opacity = 1;
+    for (let node = el; node instanceof Element; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (style.visibility === 'hidden' || style.display === 'none') return false;
+      opacity *= Number(style.opacity);
+      if (opacity < 0.1) return false;
+    }
+    return true;
+  };
+  /*
+   * A control the remote is on that can actually be seen. When the controls
+   * fade, the page keeps focus on the control it was on; OK then pressed that
+   * hidden button (play only toggled, without the scrub's position).
+   */
+  const visibleFocus = () => keyboardFocus() && shown(document.activeElement);
+  /** Scrubbing paused through pictures, which OK plays from and the arrows step. */
+  const scrubbing = () => !!document.querySelector('[data-ui=scrub-strip]');
   const playerKey = (name) => {
-    if (!inPlayer || !(name in PLAYER_KEYS) || keyboardFocus()) return name;
+    if (!inPlayer || !(name in PLAYER_KEYS)) return name;
+    if (visibleFocus() && !scrubbing()) return name;
     if (
       name === 'Enter' &&
       document.querySelector('[data-ui=skip-segment][data-visible]')
@@ -263,7 +283,7 @@
         // A held key repeats as whatever it went down as.
         const as = repeat && sent.has(name) ? sent.get(name) : playerKey(name);
         sent.set(name, as);
-        const toSubtitles = name === 'ArrowDown' && !repeat && inPlayer && !keyboardFocus();
+        const toSubtitles = name === 'ArrowDown' && !repeat && inPlayer && !visibleFocus() && !scrubbing();
         key('keydown', as, repeat);
         // Down brings the controls with the subtitles button picked out, not opened.
         if (toSubtitles) focusSubtitles();
