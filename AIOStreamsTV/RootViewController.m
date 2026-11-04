@@ -4,6 +4,7 @@
 #import <objc/message.h>
 
 
+#import "AIOAetherEngine.h"
 #import "AIOMPVPlayer.h"
 #import "AIONowPlaying.h"
 #import "AIOPlayerEngine.h"
@@ -474,9 +475,11 @@ static const CGFloat kSwipeStepY = 150;
             [self askForServer];
         });
     }]];
-    NSString *other = self.usesVLC ? @"Player: VLC — switch to mpv" : @"Player: mpv — switch to VLC";
-    [menu addAction:[UIAlertAction actionWithTitle:other style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        [self switchPlayer];
+    NSString *player = [NSString stringWithFormat:@"Player: %@", [self playerTitle:self.engineName]];
+    [menu addAction:[UIAlertAction actionWithTitle:player style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self choosePlayer];
+        });
     }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
         [self.web focusPage];
@@ -486,8 +489,42 @@ static const CGFloat kSwipeStepY = 150;
 
 #pragma mark - Player
 
+/** mpv, vlc or aether. */
+- (NSString *)engineName {
+    NSString *name = [NSUserDefaults.standardUserDefaults stringForKey:kEngineKey];
+    return [@[ @"vlc", @"aether" ] containsObject:name] ? name : @"mpv";
+}
+
 - (BOOL)usesVLC {
-    return [[NSUserDefaults.standardUserDefaults stringForKey:kEngineKey] isEqualToString:@"vlc"];
+    return [self.engineName isEqualToString:@"vlc"];
+}
+
+- (NSString *)playerTitle:(NSString *)name {
+    if ([name isEqualToString:@"vlc"]) return @"VLC";
+    if ([name isEqualToString:@"aether"]) return @"AetherEngine";
+    return @"mpv";
+}
+
+- (void)choosePlayer {
+    UIAlertController *menu = [UIAlertController
+        alertControllerWithTitle:@"Player"
+                         message:@"AetherEngine keeps Dolby Vision and Atmos; mpv plays the most files; VLC is the fallback for both."
+                  preferredStyle:UIAlertControllerStyleActionSheet];
+    for (NSString *name in @[ @"mpv", @"aether", @"vlc" ]) {
+        BOOL current = [name isEqualToString:self.engineName];
+        NSString *title = current ? [[self playerTitle:name] stringByAppendingString:@" ✓"] : [self playerTitle:name];
+        [menu addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            if (current) {
+                [self.web focusPage];
+                return;
+            }
+            [self switchPlayerTo:name];
+        }]];
+    }
+    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
+        [self.web focusPage];
+    }]];
+    [self presentViewController:menu animated:YES completion:nil];
 }
 
 - (id<AIOPlayerEngine>)makeVLC {
@@ -513,7 +550,14 @@ static const CGFloat kSwipeStepY = 150;
     [self.fallback shutdown];
     self.fallback = nil;
     [self.player shutdown];
-    self.player = self.usesVLC ? [self makeVLC] : [[AIOMPVPlayer alloc] initWithHost:self.videoView];
+    NSString *name = self.engineName;
+    if ([name isEqualToString:@"vlc"]) {
+        self.player = [self makeVLC];
+    } else if ([name isEqualToString:@"aether"]) {
+        self.player = [[AIOAetherEngine alloc] initWithHost:self.videoView];
+    } else {
+        self.player = [[AIOMPVPlayer alloc] initWithHost:self.videoView];
+    }
     [self connect:self.player];
     self.active = self.player;
     if (!self.lastSet) self.lastSet = [NSMutableDictionary dictionary];
@@ -560,10 +604,10 @@ static const CGFloat kSwipeStepY = 150;
     if ([type isEqualToString:@"player-state"] && [message[@"positionMs"] isKindOfClass:NSNumber.class]) {
         self.lastPositionMs = [message[@"positionMs"] doubleValue];
     }
-    // mpv couldn't play the file: VLC tries it, unless the link itself refused.
+    // mpv or AetherEngine couldn't play the file: VLC tries it, unless the link itself refused.
     BOOL failed = [type isEqualToString:@"player-ended"] && [message[@"reason"] isEqual:@"error"];
     BOOL linkRefused = message[@"status"] != nil;
-    if (failed && !linkRefused && !self.fellBack && self.lastLoad && [engine isKindOfClass:AIOMPVPlayer.class]) {
+    if (failed && !linkRefused && !self.fellBack && self.lastLoad && ![engine isKindOfClass:AIOVLCPlayer.class]) {
         [self fallBackToVLC];
         return;
     }
@@ -578,7 +622,7 @@ static const CGFloat kSwipeStepY = 150;
     }
     [self.player handle:@"player-stop" message:@{ @"type": @"player-stop" }];
     self.active = self.fallback;
-    [self flashStatus:@"mpv couldn't play this; trying VLC."];
+    [self flashStatus:[NSString stringWithFormat:@"%@ couldn't play this; trying VLC.", [self playerTitle:self.engineName]]];
     for (NSDictionary *message in @[ self.lastSettings ?: @{}, self.lastStyle ?: @{}, self.lastSkips ?: @{} ]) {
         if ([message[@"type"] isKindOfClass:NSString.class]) [self.fallback handle:message[@"type"] message:message];
     }
@@ -590,8 +634,8 @@ static const CGFloat kSwipeStepY = 150;
     [self.fallback handle:@"player-load" message:load];
 }
 
-- (void)switchPlayer {
-    [NSUserDefaults.standardUserDefaults setObject:self.usesVLC ? @"mpv" : @"vlc" forKey:kEngineKey];
+- (void)switchPlayerTo:(NSString *)name {
+    [NSUserDefaults.standardUserDefaults setObject:name forKey:kEngineKey];
     [self makePlayer];
     // The page's player started on the other one; reloading starts it afresh.
     [self loadServer];
@@ -674,8 +718,11 @@ static const CGFloat kSwipeStepY = 150;
         NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"0";
         [self sendToPage:@{
             @"type": @"app-info", @"app": [version stringByAppendingString:@" (tvOS)"], @"platform": @"android",
-            @"mpv": self.usesVLC ? NSNull.null : @"libmpv (MPVKit)", @"ffmpeg": NSNull.null,
-            @"player": self.usesVLC ? @"VLCKit" : @"mpv", @"ac3Encoder": @NO,
+            @"mpv": [self.engineName isEqualToString:@"mpv"] ? @"libmpv (MPVKit)" : NSNull.null, @"ffmpeg": NSNull.null,
+            @"player": [self.engineName isEqualToString:@"aether"]
+                ? [@"AetherEngine " stringByAppendingString:AIOAetherEngine.version]
+                : self.usesVLC ? @"VLCKit" : @"mpv",
+            @"ac3Encoder": @NO,
         }];
     } else if ([type isEqualToString:@"fullscreen"]) {
         id value = message[@"value"];

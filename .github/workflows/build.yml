@@ -14,7 +14,8 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15
+    # AetherEngine is built with the newest SDK (tvOS 27).
+    runs-on: macos-26
     outputs:
       channel: ${{ steps.version.outputs.channel }}
       tag: ${{ steps.version.outputs.tag }}
@@ -116,6 +117,13 @@ jobs:
             echo "::error::Info.plist doesn't match the version, build or bundle id"
             exit 1
           }
+          # AetherEngine's FFmpeg must ship beside the app, and its framework must call it, not mpv's.
+          app=Payload/AIOStreamsTV.app
+          ls "$app/Frameworks"
+          for framework in AIOAether AetherLibavcodec AetherLibavformat AetherLibavutil; do
+            [[ -d "$app/Frameworks/$framework.framework" ]] || { echo "::error::$framework.framework isn't in the app"; exit 1; }
+          done
+          xcrun nm -m "$app/Frameworks/AIOAether.framework/AIOAether" | grep '_avcodec_open2' || true
           zip -qry "$IPA" Payload
           ls -lh "$IPA"
 

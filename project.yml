@@ -2,14 +2,38 @@ name: AIOStreamsTV
 options:
   bundleIdPrefix: io.github.aiostreamstv
   deploymentTarget:
-    tvOS: "17.5"
+    # AetherEngine needs tvOS 18, which every Apple TV that runs 17 can have.
+    tvOS: "18.0"
 settings:
   base:
     # The next planned version: nightlies carry it; bump it after each stable release.
     MARKETING_VERSION: 0.4.0
     # CI sets the build number to the run number; this is only for local builds.
     CURRENT_PROJECT_VERSION: 1
+packages:
+  AetherEngine:
+    url: https://github.com/superuser404notfound/AetherEngine
+    exactVersion: 7.56.0
 targets:
+  # AetherEngine in a framework of its own, so its FFmpeg is the one it calls:
+  # mpv's FFmpeg is linked statically into the app, and would otherwise win.
+  AIOAether:
+    type: framework
+    platform: tvOS
+    sources:
+      - path: AIOAether
+    dependencies:
+      - package: AetherEngine
+    settings:
+      base:
+        PRODUCT_NAME: AIOAether
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.aiostreamstv.app.aether
+        GENERATE_INFOPLIST_FILE: YES
+        DEFINES_MODULE: YES
+        SWIFT_VERSION: "5.0"
+        SKIP_INSTALL: YES
+        TARGETED_DEVICE_FAMILY: 3
+        CODE_SIGN_STYLE: Automatic
   AIOStreamsTV:
     type: application
     platform: tvOS
@@ -25,6 +49,9 @@ targets:
       - path: AIOStreamsTV/Fonts
         type: folder
         buildPhase: resources
+    dependencies:
+      - target: AIOAether
+        embed: true
     settings:
       base:
         PRODUCT_NAME: AIOStreamsTV
