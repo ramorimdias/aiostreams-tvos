@@ -124,6 +124,9 @@ jobs:
             [[ -d "$app/Frameworks/$framework.framework" ]] || { echo "::error::$framework.framework isn't in the app"; exit 1; }
           done
           xcrun nm -m "$app/Frameworks/AIOAether.framework/AIOAether" | grep '_avcodec_open2' || true
+          # The engine's own resources (its silent Atmos clip), which it looks for beside its code.
+          find "$app" -name 'AetherEngine_AetherEngine.bundle' -maxdepth 3 | grep . || {
+            echo "::error::AetherEngine's resource bundle isn't in the app"; exit 1; }
           zip -qry "$IPA" Payload
           ls -lh "$IPA"
 
