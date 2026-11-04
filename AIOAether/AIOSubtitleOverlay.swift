@@ -167,9 +167,14 @@ final class AIOSubtitleOverlay: UIView {
 
     private func showTexts(_ cues: [SubtitleCue], in video: CGRect) {
         guard !cues.isEmpty else { return }
-        // mpv's sizes are for a 720-line picture.
+        // Sizes are for a 720-line picture, as mpv's. At the page's normal size a
+        // line is about 5.5% of the picture, as in Apple's own player (mpv's 55
+        // makes it 7.6%), and the size is the line's height (ascender to
+        // descender) where UIKit's is the em.
         let unit = video.height / 720
-        let fontSize = max(12, 55 * style.scale * unit)
+        let probe = font(size: 100, bold: style.bold, italic: false)
+        let lineHeight = max(1, (probe.ascender - probe.descender) / 100)
+        let fontSize = max(12, 40 * style.scale * unit / lineHeight)
         let margin = 22 * unit
 
         var bottom: [SubtitleCue] = []
