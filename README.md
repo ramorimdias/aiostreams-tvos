@@ -1,7 +1,7 @@
 # AIOStreams web for tvOS
 
 AIOStreams' own web app on Apple TV, the way the official Android app does it: your server's
-page on top, drawing every screen and the player's controls, and mpv playing the video beneath it.
+page on top, drawing every screen and the player's controls, and AetherEngine (or mpv) playing the video beneath it.
 The page comes straight from your AIOStreams instance, so every server update shows up here
 without rebuilding the app.
 
@@ -24,7 +24,7 @@ works with any instance. Hold Play/Pause to change it later.
 | Click                     | Enter (hold it for the page's hold actions)     |
 | Back / Menu               | The page's Back; twice on Home leaves the app   |
 | Play/Pause                | Play/Pause                                      |
-| **Hold Play/Pause (1 s)** | App menu: reload, server address, mpv or VLC    |
+| **Hold Play/Pause (1 s)** | App menu: reload, server address, player        |
 
 Clicking a text field opens the tvOS keyboard (dictation works there too).
 
@@ -71,15 +71,18 @@ Pick your Apple TV as the destination and run. Safari's *Develop* menu can inspe
 
 - tvOS ships WebKit without exposing it in the SDK, so the app loads it at runtime. That is a
   private API: fine for sideloading, never for the App Store.
-- The player is libmpv, as in AIOStreams' desktop and Android apps, from Streamyfin's
-  [MPVKit](https://github.com/streamyfin/MPVKit) build, whose `vo_avfoundation` output hands
-  HDR10 and HLG to the TV. With *Match Content* on in the Apple TV's settings, the TV switches to
-  the video's range and frame rate. Dolby Vision plays through its HDR10 base layer. VLC remains
-  in the app menu as a fallback; it shows HDR as SDR.
-- Subtitles are drawn by libass in the bundled Inter, close to Apple's SF Pro, with Noto Sans as a
-  fallback (both SIL Open Font License).
-- MPVKit and VLCKit are GPL/LGPL, so builds of this app are for personal use.
-- Not carried over from the Android app: seek-bar thumbnails, the mpv config editor, downloads
-  and voice search.
+- The default player is [AetherEngine](https://github.com/superuser404notfound/AetherEngine):
+  FFmpeg reads the file, VideoToolbox and AVPlayer play it, so Dolby Vision, HDR10+ and Atmos reach
+  the TV as they do from Apple's own player, and *Match Content* switches the TV's mode. It lives
+  in its own framework (`AIOAether`) so it calls its own FFmpeg, not mpv's. The app draws its
+  subtitles in the page's style; seek-bar pictures come from what it has already downloaded.
+  It needs tvOS 18.
+- libmpv, as in AIOStreams' desktop and Android apps, from Streamyfin's
+  [MPVKit](https://github.com/streamyfin/MPVKit) build, is in the app menu; it hands HDR10 and HLG
+  to the TV and plays Dolby Vision through its HDR10 base layer. Its subtitles are drawn by libass
+  in the bundled Inter, with Noto Sans as a fallback (both SIL Open Font License).
+- VLC takes over a file AetherEngine or mpv can't play, and can be picked in the menu too.
+- AetherEngine is LGPL, MPVKit and VLCKit GPL/LGPL, so builds of this app are for personal use.
+- Not carried over from the Android app: the mpv config editor, downloads and voice search.
 - tvOS may clear a web page's stored data when space runs low; you'd sign in again.
 - The icon and Top Shelf image are AIOStreams' own logo, from its `branding` folder.

@@ -23,6 +23,7 @@ static const NSUInteger kStorageMaxChars = 350000;
 static const NSUInteger kStorageMaxValue = 100000;
 /** `mpv` (the default) or `vlc`. */
 static NSString *const kEngineKey = @"playerEngine";
+static NSString *const kAetherDefaultKey = @"aetherIsDefault";
 /** Held this long, Play/Pause opens the app's own menu instead. */
 static const NSTimeInterval kMenuHold = 1.0;
 static const NSTimeInterval kRepeatDelay = 0.45;
@@ -489,10 +490,16 @@ static const CGFloat kSwipeStepY = 150;
 
 #pragma mark - Player
 
-/** mpv, vlc or aether. */
+/** aether (the default), mpv or vlc. */
 - (NSString *)engineName {
-    NSString *name = [NSUserDefaults.standardUserDefaults stringForKey:kEngineKey];
-    return [@[ @"vlc", @"aether" ] containsObject:name] ? name : @"mpv";
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    // AetherEngine became the default: a choice made before then starts on it once.
+    if (![defaults boolForKey:kAetherDefaultKey]) {
+        [defaults setBool:YES forKey:kAetherDefaultKey];
+        [defaults setObject:@"aether" forKey:kEngineKey];
+    }
+    NSString *name = [defaults stringForKey:kEngineKey];
+    return [@[ @"vlc", @"mpv" ] containsObject:name] ? name : @"aether";
 }
 
 - (BOOL)usesVLC {
@@ -510,7 +517,7 @@ static const CGFloat kSwipeStepY = 150;
         alertControllerWithTitle:@"Player"
                          message:@"AetherEngine keeps Dolby Vision and Atmos; mpv plays the most files; VLC is the fallback for both."
                   preferredStyle:UIAlertControllerStyleActionSheet];
-    for (NSString *name in @[ @"mpv", @"aether", @"vlc" ]) {
+    for (NSString *name in @[ @"aether", @"mpv", @"vlc" ]) {
         BOOL current = [name isEqualToString:self.engineName];
         NSString *title = current ? [[self playerTitle:name] stringByAppendingString:@" ✓"] : [self playerTitle:name];
         [menu addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
