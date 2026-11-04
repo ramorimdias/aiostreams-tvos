@@ -52,6 +52,34 @@ targets:
     dependencies:
       - target: AIOAether
         embed: true
+    postBuildScripts:
+      # Xcode doesn't copy the frameworks AIOAether's package uses (its FFmpeg,
+      # libdovi) into the app, so this copies whatever AIOAether loads.
+      - name: Embed AetherEngine's frameworks
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          dest="${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}"
+          [ -d "$dest/AIOAether.framework" ] || exit 0
+          added=1
+          while [ "$added" = 1 ]; do
+            added=0
+            for framework in "$dest"/*.framework; do
+              binary="$framework/$(basename "$framework" .framework)"
+              [ -f "$binary" ] || continue
+              for name in $(otool -L "$binary" | awk '/@rpath\/[^ ]*\.framework\// {print $1}' | sed -E 's#@rpath/([^/]+\.framework)/.*#\1#'); do
+                [ -d "$dest/$name" ] && continue
+                source="$(find "${BUILT_PRODUCTS_DIR}" -maxdepth 2 -type d -name "$name" | head -1)"
+                if [ -z "$source" ]; then
+                  echo "error: $name, which $(basename "$framework") loads, wasn't built"
+                  exit 1
+                fi
+                echo "Embedding $name"
+                ditto "$source" "$dest/$name"
+                added=1
+              done
+            done
+          done
     settings:
       base:
         PRODUCT_NAME: AIOStreamsTV
