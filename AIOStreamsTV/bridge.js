@@ -62,6 +62,25 @@
   };
 
   /*
+   * Reopened where it was left (a saved route, or a reload after WebKit's
+   * process ended), the page would have no history before it, and Back would
+   * leave the app. Home goes beneath it first, as the router would have
+   * recorded it (TanStack's history state), so Back goes there.
+   */
+  try {
+    const hash = location.hash;
+    const path = hash.slice(1).split('?')[0] || '/';
+    if (path !== '/' && history.length === 1 && history.state?.__TSR_index == null) {
+      const key = () => Math.random().toString(36).slice(2, 10);
+      const base = location.href.split('#')[0];
+      const home = key();
+      const here = key();
+      history.replaceState({ __TSR_index: 0, key: home, __TSR_key: home }, '', base + '#/');
+      history.pushState({ __TSR_index: 1, key: here, __TSR_key: here }, '', base + hash);
+    }
+  } catch {}
+
+  /*
    * tvOS can drop a web view's stored data between launches, and with it the
    * page's sign-in. The app keeps a copy of localStorage (by origin), puts
    * back what is missing as the page starts, and hears of every change.
@@ -146,6 +165,13 @@
     (el.tagName === 'TEXTAREA' ||
       (el.tagName === 'INPUT' && !NOT_TEXT.has((el.type || 'text').toLowerCase())));
   const target = () => document.activeElement || document.body;
+  /*
+   * A pick list's filter field (the settings' multi-selects): OK picks the
+   * highlighted entry rather than opening the keyboard over it.
+   */
+  const picksFromList = (el) =>
+    el.hasAttribute('cmdk-input') ||
+    (el.getAttribute('role') === 'combobox' && !!el.getAttribute('aria-activedescendant'));
   let editing = null;
   let swallowed = false;
 
@@ -311,7 +337,7 @@
     'focusin',
     (e) => {
       const el = e.target;
-      if (!isTextField(el) || el.type !== 'search' || editing) return;
+      if (!isTextField(el) || el.type !== 'search' || picksFromList(el) || editing) return;
       if (lastPress?.name !== 'Enter' || Date.now() - lastPress.at > 3000) return;
       setTimeout(() => {
         if (document.activeElement === el && !editing) openKeyboard(el);
@@ -326,7 +352,7 @@
         const el = target();
         // tvOS has no keyboard for a web page, so the app shows its own.
         lastPress = { name, at: Date.now() };
-        if (name === 'Enter' && isTextField(el)) {
+        if (name === 'Enter' && isTextField(el) && !picksFromList(el)) {
           if (repeat) return;
           swallowed = true;
           openKeyboard(el);
