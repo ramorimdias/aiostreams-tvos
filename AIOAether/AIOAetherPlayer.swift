@@ -1,6 +1,7 @@
 import AVFoundation
 import Combine
 import UIKit
+import os
 
 import AetherEngine
 
@@ -36,6 +37,10 @@ public final class AIOAetherPlayer: NSObject {
     private var loaded = false
     private var ended = false
     private var subtitleMode = "default"
+    /// The page's load, for one retry reading the file front to back.
+    private var lastLoad: [String: Any]?
+    private var lastDuration: Double = 0
+    private var retriedSequential = false
     /// Subtitle files added by URL, by the track id the engine listed them under.
     private var externalURLs: [Int: String] = [:]
     private var autoSkips: [(start: Double, end: Double)] = []
@@ -142,7 +147,15 @@ public final class AIOAetherPlayer: NSObject {
 
     // MARK: - Loading
 
-    private func load(_ message: [String: Any]) {
+    /// Reads ahead (~4 s a segment) as far as memory allows, as NuvioTVOS's automatic cache does.
+    private static func forwardSegments() -> Int {
+        let physical = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+        let available = Double(os_proc_available_memory()) / 1_048_576
+        if physical > 2.5 && available >= 250 { return 25 }
+        return available >= 150 ? 10 : 4
+    }
+
+    private func load(_ message: [String: Any], sequential: Bool = false) {
         guard let engine else {
             post(["type": "player-ended", "reason": "error", "error": "AetherEngine couldn't start"])
             return
@@ -156,6 +169,11 @@ public final class AIOAetherPlayer: NSObject {
         thumbnailTask?.cancel()
         generation += 1
         let current = generation
+        if !sequential {
+            lastLoad = message
+            lastDuration = 0
+            retriedSequential = false
+        }
         url = text
         loaded = false
         ended = false
@@ -173,11 +191,22 @@ public final class AIOAetherPlayer: NSObject {
         options.autoplay = !wantPaused
         options.audioDelaySeconds = audioDelayMs / 1000
         options.audioShaping = shaping
-        // The engine reads ahead only ~40 s by default, too little for a high-bitrate
-        // file over a debrid link; ~10 min here, bounded by the engine to a quarter
-        // of the free disk. Segments are served as they arrive, not once complete.
-        options.forwardBufferSegments = 150
-        options.progressiveSegmentDelivery = true
+        // A remote file as NuvioTVOS plays one on the same engine
+        // (AetherPlaybackController's LoadOptions): debrid links meter requests,
+        // and one held connection keeps them from stalling or being refused.
+        options.maxConcurrentSourceRequests = 1
+        options.heldSourceConnection = true
+        options.forwardBufferSegments = Self.forwardSegments()
+        // The open reads 15 MB and 10 s of the file, not 50 MB and 60 s; the
+        // fonts a Matroska file carries aren't read (the app draws plain text).
+        options.probesize = 15 * 1024 * 1024
+        options.maxAnalyzeDuration = 10 * 1_000_000
+        options.skipsContainerAttachments = true
+        options.nativeVideoFrameRecovery = true
+        if sequential {
+            options.sequentialOrigin = true
+            options.declaredDurationSeconds = lastDuration > 0 ? lastDuration : nil
+        }
         let startMs = number(message["startMs"]) ?? 0
 
         surface.isHidden = false
@@ -237,6 +266,16 @@ public final class AIOAetherPlayer: NSObject {
 
     private func fail(_ text: String) {
         guard !ended else { return }
+        // A link that answers byte ranges with the wrong bytes plays read front to back, from where it was.
+        if let engine, engine.errorInfo?.kind == .sourceFabricatesRanges, !retriedSequential,
+           var again = lastLoad {
+            retriedSequential = true
+            let position = engine.clock.currentTime
+            if position > 1 { again["startMs"] = position * 1000 }
+            NSLog("[aether] the link fakes byte ranges; reading it front to back")
+            load(again, sequential: true)
+            return
+        }
         ended = true
         var message: [String: Any] = ["type": "player-ended", "reason": "error", "error": text]
         if let info = engine?.errorInfo {
@@ -450,6 +489,7 @@ public final class AIOAetherPlayer: NSObject {
             self?.sendState(["seeking": seeking])
         }.store(in: &observers)
         engine.$duration.removeDuplicates().sink { [weak self] duration in
+            if duration > 0 { self?.lastDuration = duration }
             if duration > 0 { self?.sendState(["durationMs": duration * 1000]) }
         }.store(in: &observers)
         engine.clock.$currentTime.sink { [weak self] seconds in
