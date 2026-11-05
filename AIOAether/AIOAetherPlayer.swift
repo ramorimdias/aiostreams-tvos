@@ -173,6 +173,11 @@ public final class AIOAetherPlayer: NSObject {
         options.autoplay = !wantPaused
         options.audioDelaySeconds = audioDelayMs / 1000
         options.audioShaping = shaping
+        // The engine reads ahead only ~40 s by default, too little for a high-bitrate
+        // file over a debrid link; ~10 min here, bounded by the engine to a quarter
+        // of the free disk. Segments are served as they arrive, not once complete.
+        options.forwardBufferSegments = 150
+        options.progressiveSegmentDelivery = true
         let startMs = number(message["startMs"]) ?? 0
 
         surface.isHidden = false
