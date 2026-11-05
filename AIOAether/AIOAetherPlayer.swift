@@ -53,12 +53,6 @@ public final class AIOAetherPlayer: NSObject {
     private var sentPositionAt: CFTimeInterval = 0
     private var sentTracks: String?
 
-    // A playback that stops and never comes back; see watch(_:).
-    private var stuckSince: CFTimeInterval?
-    private var stuckTimer: Timer?
-    private var revivals = 0
-    private var reviving = false
-
     private var thumbnailTask: Task<Void, Never>?
     private var statsTimer: Timer?
 
@@ -136,7 +130,6 @@ public final class AIOAetherPlayer: NSObject {
         loadTask?.cancel()
         thumbnailTask?.cancel()
         statsTimer?.invalidate()
-        stuckTimer?.invalidate()
         observers.removeAll()
         if let engine {
             engine.volume = 0
@@ -166,8 +159,6 @@ public final class AIOAetherPlayer: NSObject {
         url = text
         loaded = false
         ended = false
-        revivals = 0
-        stuckSince = nil
         externalURLs = [:]
         sentTracks = nil
         subtitleMode = message["subtitleMode"] as? String ?? "default"
@@ -226,65 +217,10 @@ public final class AIOAetherPlayer: NSObject {
         }
     }
 
-    /*
-     * A debrid link can stop answering mid-file, and the engine then waits on it
-     * without end, where a fresh start of the same link plays on. So a playback
-     * that hasn't moved for a while is reopened where it was, twice at most, and
-     * then reported as failed, for VLC to take over.
-     */
-    private static let stuckSeconds: CFTimeInterval = 12
-    private static let maxRevivals = 2
-
-    private func watch(_ phase: PlaybackPhase) {
-        guard loaded, !ended else { return }
-        switch phase {
-        case .rebuffering, .stalled:
-            if stuckSince == nil { stuckSince = CACurrentMediaTime() }
-            guard stuckTimer == nil else { return }
-            stuckTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.checkStuck() }
-            }
-        default:
-            stuckSince = nil
-            stuckTimer?.invalidate()
-            stuckTimer = nil
-        }
-    }
-
-    private func checkStuck() {
-        guard let engine, let since = stuckSince, !reviving, loaded, !ended else { return }
-        // The user's pause isn't a stall.
-        guard engine.state != .paused, CACurrentMediaTime() - since >= Self.stuckSeconds else { return }
-        guard revivals < Self.maxRevivals else {
-            stuckTimer?.invalidate()
-            stuckTimer = nil
-            fail("The stream stopped sending video")
-            return
-        }
-        revivals += 1
-        reviving = true
-        stuckSince = CACurrentMediaTime()
-        NSLog("[aether] stuck for %.0f s; reopening (%d)", Self.stuckSeconds, revivals)
-        let current = generation
-        Task { [weak self] in
-            do {
-                try await engine.reloadAtCurrentPosition()
-            } catch {
-                NSLog("[aether] reopening failed: %@", String(describing: error))
-            }
-            guard let self, current == self.generation else { return }
-            self.reviving = false
-            self.applyVolume()
-        }
-    }
-
     /// Silent at once, then stopped.
     private func stop() {
         loadTask?.cancel()
         thumbnailTask?.cancel()
-        stuckTimer?.invalidate()
-        stuckTimer = nil
-        stuckSince = nil
         generation += 1
         url = nil
         loaded = false
@@ -509,7 +445,6 @@ public final class AIOAetherPlayer: NSObject {
             case .rebuffering, .stalled, .loading: self?.sendState(["buffering": true])
             default: self?.sendState(["buffering": false])
             }
-            self?.watch(phase)
         }.store(in: &observers)
         engine.$isSeeking.removeDuplicates().sink { [weak self] seeking in
             self?.sendState(["seeking": seeking])
