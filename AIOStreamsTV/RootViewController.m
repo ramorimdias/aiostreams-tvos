@@ -5,6 +5,7 @@
 
 
 #import "AIOAetherEngine.h"
+#import "AIOYouTube.h"
 #import "AIOMPVPlayer.h"
 #import "AIONowPlaying.h"
 #import "AIOPlayerEngine.h"
@@ -744,7 +745,13 @@ static const CGFloat kSwipeStepY = 150;
         [self sendToPage:@{ @"type": @"update-state", @"state": @"off", @"channel": NSNull.null,
                             @"version": NSNull.null, @"error": NSNull.null }];
     } else if ([type isEqualToString:@"youtube-resolve"]) {
-        [self sendToPage:@{ @"type": @"youtube-resolved", @"request": message[@"request"] ?: @"", @"url": NSNull.null }];
+        // A trailer: its stream, from YouTube as AIOStreams' other apps ask for it.
+        NSString *request = [message[@"request"] isKindOfClass:NSString.class] ? message[@"request"] : @"";
+        NSString *video = [message[@"id"] isKindOfClass:NSString.class] ? message[@"id"] : @"";
+        __weak typeof(self) weakSelf = self;
+        [AIOYouTube resolve:video completion:^(NSString *url) {
+            [weakSelf sendToPage:@{ @"type": @"youtube-resolved", @"request": request, @"url": url ?: NSNull.null }];
+        }];
     } else if ([type isEqualToString:@"diagnostics"]) {
         NSString *text = [NSString stringWithFormat:@"AIOStreams TV %@\ntvOS %@\nServer %@",
                           [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"],
