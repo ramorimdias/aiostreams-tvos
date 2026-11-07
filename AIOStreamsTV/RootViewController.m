@@ -850,8 +850,6 @@ static const CGFloat kSwipeStepY = 150;
     UISearchController *search = [[UISearchController alloc] initWithSearchResultsController:results];
     search.searchResultsUpdater = self;
     search.obscuresBackgroundDuringPresentation = NO;
-    // The results area is there from the first letter on, empty field or not.
-    search.showsSearchResultsController = YES;
     search.searchBar.delegate = self;
     search.searchBar.text = value;
     search.searchBar.placeholder = label.length ? label : @"Search";
