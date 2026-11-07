@@ -1,0 +1,60 @@
+{
+  "name": "AIOStreams TV",
+  "identifier": "io.github.aiostreamstv.source",
+  "subtitle": "Stable releases",
+  "website": "https://github.com/ramorimdias/aiostreams-tvos",
+  "iconURL": "https://raw.githubusercontent.com/ramorimdias/aiostreams-tvos/main/docs/icon.png",
+  "tintColor": "#7C5CFF",
+  "apps": [
+    {
+      "name": "AIOStreams TV",
+      "bundleIdentifier": "io.github.aiostreamstv.app",
+      "developerName": "ramorimdias",
+      "subtitle": "Stable releases",
+      "localizedDescription": "AIOStreams on Apple TV: the AIOStreams web app, with AetherEngine, mpv and VLC playing the video. Asks for your AIOStreams server's address on first launch. Unsigned; for personal use.",
+      "iconURL": "https://raw.githubusercontent.com/ramorimdias/aiostreams-tvos/main/docs/icon.png",
+      "tintColor": "#7C5CFF",
+      "category": "entertainment",
+      "screenshots": [],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {}
+      },
+      "versions": [
+        {
+          "version": "0.3.0",
+          "buildVersion": "33",
+          "date": "2026-11-03T12:39:56Z",
+          "localizedDescription": "v0.3.0",
+          "downloadURL": "https://github.com/ramorimdias/aiostreams-tvos/releases/download/v0.3.0/AIOStreamsTV-0.3.0-33.ipa",
+          "size": 33207214,
+          "minOSVersion": "18.0"
+        },
+        {
+          "version": "0.2.0",
+          "buildVersion": "28",
+          "date": "2026-11-01T23:59:06Z",
+          "localizedDescription": "v0.2.0",
+          "downloadURL": "https://github.com/ramorimdias/aiostreams-tvos/releases/download/v0.2.0/AIOStreamsTV-0.2.0-28.ipa",
+          "size": 32662845,
+          "minOSVersion": "18.0"
+        },
+        {
+          "version": "0.1.0",
+          "buildVersion": "16",
+          "date": "2026-11-01T18:10:04Z",
+          "localizedDescription": "v0.1.0",
+          "downloadURL": "https://github.com/ramorimdias/aiostreams-tvos/releases/download/v0.1.0/AIOStreamsTV-0.1.0-16.ipa",
+          "size": 32643457,
+          "minOSVersion": "18.0"
+        }
+      ],
+      "version": "0.3.0",
+      "versionDate": "2026-11-03T12:39:56Z",
+      "versionDescription": "v0.3.0",
+      "downloadURL": "https://github.com/ramorimdias/aiostreams-tvos/releases/download/v0.3.0/AIOStreamsTV-0.3.0-33.ipa",
+      "size": 33207214
+    }
+  ],
+  "news": []
+}

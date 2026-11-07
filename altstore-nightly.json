@@ -1,0 +1,42 @@
+{
+  "name": "AIOStreams TV Nightly",
+  "identifier": "io.github.aiostreamstv.source.nightly",
+  "subtitle": "Every change, as it's made",
+  "website": "https://github.com/ramorimdias/aiostreams-tvos",
+  "iconURL": "https://raw.githubusercontent.com/ramorimdias/aiostreams-tvos/main/docs/icon.png",
+  "tintColor": "#7C5CFF",
+  "apps": [
+    {
+      "name": "AIOStreams TV",
+      "bundleIdentifier": "io.github.aiostreamstv.app",
+      "developerName": "ramorimdias",
+      "subtitle": "Every change, as it's made",
+      "localizedDescription": "AIOStreams on Apple TV: the AIOStreams web app, with AetherEngine, mpv and VLC playing the video. Asks for your AIOStreams server's address on first launch. Unsigned; for personal use.",
+      "iconURL": "https://raw.githubusercontent.com/ramorimdias/aiostreams-tvos/main/docs/icon.png",
+      "tintColor": "#7C5CFF",
+      "category": "entertainment",
+      "screenshots": [],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {}
+      },
+      "versions": [
+        {
+          "version": "0.4.0",
+          "buildVersion": "52",
+          "date": "2026-11-07T11:35:36Z",
+          "localizedDescription": "Nightly 0.4.0 (52)",
+          "downloadURL": "https://github.com/ramorimdias/aiostreams-tvos/releases/download/nightly/AIOStreamsTV-0.4.0-52.ipa",
+          "size": 43312297,
+          "minOSVersion": "18.0"
+        }
+      ],
+      "version": "0.4.0",
+      "versionDate": "2026-11-07T11:35:36Z",
+      "versionDescription": "Nightly 0.4.0 (52)",
+      "downloadURL": "https://github.com/ramorimdias/aiostreams-tvos/releases/download/nightly/AIOStreamsTV-0.4.0-52.ipa",
+      "size": 43312297
+    }
+  ],
+  "news": []
+}
