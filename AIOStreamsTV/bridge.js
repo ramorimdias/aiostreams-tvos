@@ -411,6 +411,8 @@
         if (!el || !el.isConnected) return;
         setValue(el, value);
         el.dispatchEvent(new Event('change', { bubbles: true }));
+        // Back on its field, which mustn't take that for a press opening the keyboard again.
+        lastPress = null;
         el.focus();
         // After React has taken the new value.
         const form = el.form;

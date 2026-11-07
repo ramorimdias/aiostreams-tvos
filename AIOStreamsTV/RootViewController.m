@@ -50,45 +50,60 @@ static const CGFloat kSwipeStepY = 150;
 }
 @end
 
+/** A strip below the keyboard that takes focus only to say Down left the keyboard. */
+@interface AIOFocusCatcher : UIView
+@end
+
+@implementation AIOFocusCatcher
+- (BOOL)canBecomeFocused {
+    return YES;
+}
+@end
+
 /**
- * Shows the keyboard as a panel over the right half of the screen, so it sits
- * top right with the page and its results in view to its left. tvOS lays the
- * keyboard out across whatever it is given, so the panel's frame decides.
+ * Where tvOS shows search results, under its keyboard: here left see-through,
+ * with the page's own results showing in it. It says where the keyboard ends,
+ * and when Down goes from the keyboard to the results.
  */
-@interface AIORightPanelPresentation : UIPresentationController
+@interface AIOSearchResults : UIViewController
+@property (nonatomic, copy, nullable) void (^onTop)(CGFloat top);
+@property (nonatomic, copy, nullable) void (^onDown)(void);
+@property (nonatomic, strong) AIOFocusCatcher *catcher;
 @end
 
-@implementation AIORightPanelPresentation
-- (CGRect)frameOfPresentedViewInContainerView {
-    CGRect bounds = self.containerView.bounds;
-    CGFloat width = floor(bounds.size.width / 2);
-    return CGRectMake(CGRectGetMaxX(bounds) - width, 0, width, bounds.size.height);
+@implementation AIOSearchResults
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = UIColor.clearColor;
+    self.catcher = [[AIOFocusCatcher alloc] initWithFrame:CGRectZero];
+    self.catcher.backgroundColor = UIColor.clearColor;
+    [self.view addSubview:self.catcher];
 }
 
-- (BOOL)shouldRemovePresentersView {
-    return NO;
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    // Across the top of the results, the first thing Down from the keyboard reaches.
+    self.catcher.frame = CGRectMake(0, 0, self.view.bounds.size.width, 160);
+    if (self.onTop && self.view.window) {
+        self.onTop([self.view convertPoint:CGPointZero toView:nil].y);
+    }
 }
 
-- (void)containerViewWillLayoutSubviews {
-    [super containerViewWillLayoutSubviews];
-    self.presentedView.frame = self.frameOfPresentedViewInContainerView;
-}
-@end
-
-@interface AIORightPanel : NSObject <UIViewControllerTransitioningDelegate>
-@end
-
-@implementation AIORightPanel
-- (UIPresentationController *)presentationControllerForPresentedViewController:(UIViewController *)presented
-                                                      presentingViewController:(UIViewController *)presenting
-                                                          sourceViewController:(UIViewController *)source {
-    return [[AIORightPanelPresentation alloc] initWithPresentedViewController:presented presentingViewController:presenting];
+- (void)didUpdateFocusInContext:(UIFocusUpdateContext *)context
+       withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
+    [super didUpdateFocusInContext:context withAnimationCoordinator:coordinator];
+    if (context.nextFocusedView == self.catcher && self.onDown) {
+        void (^down)(void) = self.onDown;
+        self.onDown = nil;
+        down();
+    }
 }
 @end
 
 @interface RootViewController () <UISearchResultsUpdating, UISearchBarDelegate>
-/** Kept while the keyboard shows: a transitioning delegate isn't retained by what it presents. */
-@property (nonatomic, strong, nullable) AIORightPanel *rightPanel;
+/** Down left the search keyboard for the results: the page gets that Down once it's closed. */
+@property (nonatomic) BOOL keyboardToResults;
 @property (nonatomic, strong) AIONowPlaying *nowPlaying;
 /** The text on the open search keyboard, which goes into the page as it changes. */
 @property (nonatomic, copy, nullable) NSString *typed;
@@ -820,19 +835,23 @@ static const CGFloat kSwipeStepY = 150;
 }
 
 /**
- * tvOS's own search keyboard over the page, each change going straight into
- * the page's field, so its results update while typing. Menu or Done closes it.
+ * tvOS's own search keyboard across the top of the screen, as Apple's apps
+ * show it, with the page beneath moved down so its results show under the
+ * keyboard, changing as each letter goes into the page's field. Down from the
+ * keyboard goes into those results; Menu or Done closes it.
  */
 - (void)showLiveKeyboard:(NSDictionary *)message {
     NSString *label = [message[@"label"] isKindOfClass:NSString.class] ? message[@"label"] : @"";
     NSString *value = [message[@"value"] isKindOfClass:NSString.class] ? message[@"value"] : @"";
     self.typed = value;
+    self.keyboardToResults = NO;
 
-    UIViewController *results = [UIViewController new];
-    results.view.backgroundColor = UIColor.clearColor;
+    AIOSearchResults *results = [AIOSearchResults new];
     UISearchController *search = [[UISearchController alloc] initWithSearchResultsController:results];
     search.searchResultsUpdater = self;
     search.obscuresBackgroundDuringPresentation = NO;
+    // The results area is there from the first letter on, empty field or not.
+    search.showsSearchResultsController = YES;
     search.searchBar.delegate = self;
     search.searchBar.text = value;
     search.searchBar.placeholder = label.length ? label : @"Search";
@@ -842,17 +861,40 @@ static const CGFloat kSwipeStepY = 150;
     if ([message[@"url"] boolValue]) search.searchBar.keyboardType = UIKeyboardTypeURL;
 
     AIOKeyboardContainer *container = [[AIOKeyboardContainer alloc] initWithSearchController:search];
-    // A panel on the right half, over the page, whose results show to its left.
-    self.rightPanel = [AIORightPanel new];
-    container.modalPresentationStyle = UIModalPresentationCustom;
-    container.transitioningDelegate = self.rightPanel;
-    container.view.backgroundColor = [UIColor colorWithWhite:0.06 alpha:0.85];
+    container.modalPresentationStyle = UIModalPresentationOverFullScreen;
+    container.view.backgroundColor = UIColor.clearColor;
+    // A dark band behind the keyboard, down to where the results begin.
+    UIView *band = [[UIView alloc] initWithFrame:CGRectZero];
+    band.backgroundColor = [UIColor colorWithWhite:0.05 alpha:0.92];
+    band.userInteractionEnabled = NO;
+    [container.view insertSubview:band atIndex:0];
+
     __weak typeof(self) weakSelf = self;
+    __weak AIOKeyboardContainer *weakContainer = container;
+    results.onTop = ^(CGFloat top) {
+        UIView *view = weakContainer.view;
+        band.frame = CGRectMake(0, 0, view.bounds.size.width, top);
+        [view sendSubviewToBack:band];
+        [weakSelf movePageBelow:top];
+    };
+    results.onDown = ^{
+        weakSelf.keyboardToResults = YES;
+        [weakSelf dismissViewControllerAnimated:YES completion:nil];
+    };
     container.onClose = ^{
-        weakSelf.rightPanel = nil;
+        [weakSelf movePageBelow:0];
         [weakSelf finishTyping];
     };
     [self presentViewController:container animated:YES completion:nil];
+}
+
+/** The page drawn lower (not laid out again), so the top of its results shows under the keyboard. */
+- (void)movePageBelow:(CGFloat)top {
+    CGAffineTransform moved = top > 0 ? CGAffineTransformMakeTranslation(0, top - 60) : CGAffineTransformIdentity;
+    if (CGAffineTransformEqualToTransform(self.web.transform, moved)) return;
+    [UIView animateWithDuration:0.25 animations:^{
+        self.web.transform = moved;
+    }];
 }
 
 - (void)updateSearchResultsForSearchController:(UISearchController *)searchController {
@@ -872,6 +914,12 @@ static const CGFloat kSwipeStepY = 150;
     self.typed = nil;
     [self callTV:[NSString stringWithFormat:@"type(%@,false)", [self jsonString:text]]];
     [self.web focusPage];
+    if (self.keyboardToResults) {
+        // Down from the keyboard carries on into the page's results.
+        self.keyboardToResults = NO;
+        [self callTV:@"down('ArrowDown',false)"];
+        [self callTV:@"up('ArrowDown')"];
+    }
 }
 
 #pragma mark - Remote
