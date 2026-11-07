@@ -57,6 +57,14 @@ The IPA is unsigned; the sideloading tool signs it with your Apple ID.
 
 With a paid Apple developer account the signature lasts a year.
 
+### AltStore sources
+
+Stores and loaders that follow AltStore sources can update the app on their own. After each
+release, the workflow rewrites both sources on the `altstore` branch:
+
+- Stable: `https://raw.githubusercontent.com/ramorimdias/aiostreams-tvos/altstore/altstore.json`
+- Nightly: `https://raw.githubusercontent.com/ramorimdias/aiostreams-tvos/altstore/altstore-nightly.json`
+
 ## Build locally (Mac)
 
 ```sh

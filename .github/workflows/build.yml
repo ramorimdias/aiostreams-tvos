@@ -198,3 +198,32 @@ jobs:
             --latest \
             --title "$TAG" \
             --notes "Build $BUILD of $GITHUB_SHA. Unsigned; sideload with ATVLoadly or Sideloadly."
+
+  # After either: the AltStore sources, written fresh from the releases onto
+  # the "altstore" branch, which holds only them, for stores to follow:
+  # https://raw.githubusercontent.com/<repo>/altstore/altstore.json (stable)
+  # https://raw.githubusercontent.com/<repo>/altstore/altstore-nightly.json
+  source:
+    needs: [nightly, stable]
+    if: always() && (needs.nightly.result == 'success' || needs.stable.result == 'success')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: altstore
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write and publish
+        run: |
+          out="$(mktemp -d)"
+          gh api --paginate "repos/$GH_REPO/releases" | python3 scripts/altstore.py "$GH_REPO" "$out"
+          cd "$out"
+          git init -q -b altstore
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add altstore.json altstore-nightly.json
+          git commit -qm "AltStore sources for $GITHUB_SHA"
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git" altstore
