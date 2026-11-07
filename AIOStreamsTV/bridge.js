@@ -166,6 +166,30 @@
       (el.tagName === 'INPUT' && !NOT_TEXT.has((el.type || 'text').toLowerCase())));
   const target = () => document.activeElement || document.body;
   /*
+   * On a TV the page marks the cards a row has scrolled out of sight
+   * `data-nav-out`, and arrows skip them. A row measured while it was still
+   * hidden, as Continue watching and Upcoming can be while they load, gets
+   * every card marked, and stays so until the row itself scrolls: Down from
+   * the hero then jumps past it. Before an up or down move, a row on screen
+   * with every card marked gets the cards in its view back.
+   */
+  const unhideRows = () => {
+    const rows = new Set();
+    for (const card of document.querySelectorAll('[data-nav-row] > [data-nav-out]'))
+      rows.add(card.parentElement);
+    for (const row of rows) {
+      if (row.querySelector(':scope > :not([data-nav-out])')) continue;
+      const scroller = row.closest('[data-nav-self-scroll]') || row;
+      const view = scroller.getBoundingClientRect();
+      if (!view.width || !view.height || view.bottom < 0 || view.top > innerHeight * 2) continue;
+      for (const card of row.children) {
+        const box = card.getBoundingClientRect();
+        if (box.width && box.right >= view.left && box.left <= view.right)
+          card.removeAttribute('data-nav-out');
+      }
+    }
+  };
+  /*
    * A pick list's filter field (the settings' multi-selects): OK picks the
    * highlighted entry rather than opening the keyboard over it.
    */
@@ -358,6 +382,7 @@
           openKeyboard(el);
           return;
         }
+        if (!inPlayer && (name === 'ArrowDown' || name === 'ArrowUp')) unhideRows();
         // A held key repeats as whatever it went down as.
         const as = repeat && sent.has(name) ? sent.get(name) : playerKey(name);
         sent.set(name, as);
