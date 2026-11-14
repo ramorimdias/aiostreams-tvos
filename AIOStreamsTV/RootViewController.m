@@ -108,6 +108,8 @@ static const CGFloat kSwipeStepY = 150;
 /** The text on the open search keyboard, which goes into the page as it changes. */
 @property (nonatomic, copy, nullable) NSString *typed;
 @property (nonatomic, strong) UIView *videoView;
+/** The video is in a box of the page, by the page's `player-frame`. */
+@property (nonatomic) BOOL videoFramed;
 @property (nonatomic, strong) AIOWebView *web;
 /** The player chosen in the menu. */
 @property (nonatomic, strong) id<AIOPlayerEngine> player;
@@ -586,9 +588,67 @@ static const CGFloat kSwipeStepY = 150;
     if (!self.lastSet) self.lastSet = [NSMutableDictionary dictionary];
 }
 
+/**
+ * The page's `player-frame`: the video in a box of the page, in the page's
+ * pixels, under a hole the page leaves for it (a trailer on Home or a title's
+ * page); none fills the screen again.
+ */
+- (void)placeVideo:(NSDictionary *)message {
+    NSDictionary *frame = [message[@"frame"] isKindOfClass:NSDictionary.class] ? message[@"frame"] : nil;
+    CGFloat (^number)(NSString *) = ^CGFloat(NSString *key) {
+        return [frame[key] isKindOfClass:NSNumber.class] ? [frame[key] doubleValue] : 0;
+    };
+    self.videoFramed = frame != nil;
+    UIView *video = self.videoView;
+    if (!frame || number(@"width") <= 0 || number(@"height") <= 0) {
+        video.hidden = NO;
+        video.layer.mask = nil;
+        video.frame = self.view.bounds;
+        return;
+    }
+    CGFloat viewport = [message[@"viewport"] isKindOfClass:NSNumber.class] ? [message[@"viewport"] doubleValue] : 0;
+    CGFloat scale = viewport > 0 ? self.view.bounds.size.width / viewport : 1;
+    CGRect box = CGRectMake(number(@"x") * scale, number(@"y") * scale, number(@"width") * scale, number(@"height") * scale);
+    void (^place)(void) = ^{
+        video.frame = box;
+    };
+    if ([frame[@"animate"] isEqual:@YES]) {
+        [UIView animateWithDuration:0.25 animations:place];
+    } else {
+        place();
+    }
+    video.hidden = [frame[@"hidden"] isEqual:@YES];
+    // The corners the page's box has.
+    CGFloat top = number(@"radius") * scale, bottom = number(@"bottomRadius") * scale;
+    if (top > 0 || bottom > 0) {
+        CGRect bounds = CGRectMake(0, 0, box.size.width, box.size.height);
+        UIBezierPath *path = [UIBezierPath bezierPath];
+        [path moveToPoint:CGPointMake(top, 0)];
+        [path addLineToPoint:CGPointMake(CGRectGetMaxX(bounds) - top, 0)];
+        [path addQuadCurveToPoint:CGPointMake(CGRectGetMaxX(bounds), top) controlPoint:CGPointMake(CGRectGetMaxX(bounds), 0)];
+        [path addLineToPoint:CGPointMake(CGRectGetMaxX(bounds), CGRectGetMaxY(bounds) - bottom)];
+        [path addQuadCurveToPoint:CGPointMake(CGRectGetMaxX(bounds) - bottom, CGRectGetMaxY(bounds))
+                     controlPoint:CGPointMake(CGRectGetMaxX(bounds), CGRectGetMaxY(bounds))];
+        [path addLineToPoint:CGPointMake(bottom, CGRectGetMaxY(bounds))];
+        [path addQuadCurveToPoint:CGPointMake(0, CGRectGetMaxY(bounds) - bottom) controlPoint:CGPointMake(0, CGRectGetMaxY(bounds))];
+        [path addLineToPoint:CGPointMake(0, top)];
+        [path addQuadCurveToPoint:CGPointMake(top, 0) controlPoint:CGPointZero];
+        [path closePath];
+        CAShapeLayer *mask = [CAShapeLayer layer];
+        mask.path = path.CGPath;
+        video.layer.mask = mask;
+    } else {
+        video.layer.mask = nil;
+    }
+}
+
 /** What the page asks of its player, kept to start VLC from, and sent to the one in use. */
 - (BOOL)routeToPlayer:(NSString *)type message:(NSDictionary *)message {
     if (![type hasPrefix:@"player-"] && ![type isEqualToString:@"subtitle-file"]) return NO;
+    if ([type isEqualToString:@"player-frame"]) {
+        [self placeVideo:message];
+        return YES;
+    }
     if ([type isEqualToString:@"player-load"]) {
         // Each file starts on the chosen player again.
         [self useChosenPlayer];
@@ -630,7 +690,10 @@ static const CGFloat kSwipeStepY = 150;
     // mpv or AetherEngine couldn't play the file: VLC tries it, unless the link itself refused.
     BOOL failed = [type isEqualToString:@"player-ended"] && [message[@"reason"] isEqual:@"error"];
     BOOL linkRefused = message[@"status"] != nil;
-    if (failed && !linkRefused && !self.fellBack && self.lastLoad && ![engine isKindOfClass:AIOVLCPlayer.class]) {
+    // Not a live channel, which the page reopens itself, nor a trailer in a box, which gives way to the next.
+    BOOL pageRecovers = [self.lastLoad[@"live"] isEqual:@YES] || self.videoFramed;
+    if (failed && !linkRefused && !pageRecovers && !self.fellBack && self.lastLoad
+        && ![engine isKindOfClass:AIOVLCPlayer.class]) {
         [self fallBackToVLC];
         return;
     }
@@ -732,6 +795,7 @@ static const CGFloat kSwipeStepY = 150;
     if ([self routeToPlayer:type message:message]) return;
 
     if ([type isEqualToString:@"hello"]) {
+        [self placeVideo:@{}];
         [self hideSplash];
         self.connected = YES;
         self.linksReady = NO;

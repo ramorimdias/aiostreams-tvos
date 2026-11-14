@@ -191,21 +191,26 @@ public final class AIOAetherPlayer: NSObject {
         options.autoplay = !wantPaused
         options.audioDelaySeconds = audioDelayMs / 1000
         options.audioShaping = shaping
-        // A remote file as NuvioTVOS plays one on the same engine
-        // (AetherPlaybackController's LoadOptions): debrid links meter requests,
-        // and one held connection keeps them from stalling or being refused.
-        options.maxConcurrentSourceRequests = 1
-        options.heldSourceConnection = true
-        options.forwardBufferSegments = Self.forwardSegments()
-        // The open reads 15 MB and 10 s of the file, not 50 MB and 60 s; the
-        // fonts a Matroska file carries aren't read (the app draws plain text).
-        options.probesize = 15 * 1024 * 1024
-        options.maxAnalyzeDuration = 10 * 1_000_000
-        options.skipsContainerAttachments = true
-        options.nativeVideoFrameRecovery = true
-        if sequential {
-            options.sequentialOrigin = true
-            options.declaredDurationSeconds = lastDuration > 0 ? lastDuration : nil
+        if message["live"] as? Bool == true {
+            // A live channel: the engine's own live handling, not the settings for a file.
+            options.isLive = true
+        } else {
+            // A remote file as NuvioTVOS plays one on the same engine
+            // (AetherPlaybackController's LoadOptions): debrid links meter requests,
+            // and one held connection keeps them from stalling or being refused.
+            options.maxConcurrentSourceRequests = 1
+            options.heldSourceConnection = true
+            options.forwardBufferSegments = Self.forwardSegments()
+            // The open reads 15 MB and 10 s of the file, not 50 MB and 60 s; the
+            // fonts a Matroska file carries aren't read (the app draws plain text).
+            options.probesize = 15 * 1024 * 1024
+            options.maxAnalyzeDuration = 10 * 1_000_000
+            options.skipsContainerAttachments = true
+            options.nativeVideoFrameRecovery = true
+            if sequential {
+                options.sequentialOrigin = true
+                options.declaredDurationSeconds = lastDuration > 0 ? lastDuration : nil
+            }
         }
         let startMs = number(message["startMs"]) ?? 0
 

@@ -51,11 +51,24 @@
   const listeners = new Set();
   /** Whether the page's player is open, from what the page tells the app. */
   let inPlayer = false;
+  /** A file is loaded, in the player or in a box. */
+  let playing = false;
   /** A skip-segment press waiting for its seek to land; see playerKey. */
   let skipped = null;
+  /** The video is in a box of the page (a trailer on Home or a title's page), not the player. */
+  let framed = false;
   const send = (message) => {
-    if (message?.type === 'player-load') inPlayer = true;
+    if (message?.type === 'player-load') inPlayer = !framed;
     else if (message?.type === 'player-stop') inPlayer = false;
+    else if (message?.type === 'player-frame') {
+      framed = !!message.frame;
+      // A trailer opened whole is the player; back in its box, the remote is the page's again.
+      inPlayer = !framed && playing;
+      // The page's pixels aren't the screen's points where the page is zoomed.
+      message = { ...message, viewport: innerWidth };
+    }
+    if (message?.type === 'player-load') playing = true;
+    else if (message?.type === 'player-stop') playing = false;
     if (message?.type === 'player-seek' && skipped && skipped.toMs == null)
       skipped.toMs = Number(message.positionMs);
     handler.postMessage(JSON.stringify(message));
@@ -141,8 +154,9 @@
     platform: 'android',
     tv: true,
     voice: false,
-    gamepads: false,
     pip: false,
+    // The video can play in a box of the page, which trailers that start by themselves need.
+    miniPlayer: true,
     device: __DEVICE__,
     deviceId: __DEVICE_ID__,
     send,
