@@ -108,8 +108,6 @@ static const CGFloat kSwipeStepY = 150;
 /** The text on the open search keyboard, which goes into the page as it changes. */
 @property (nonatomic, copy, nullable) NSString *typed;
 @property (nonatomic, strong) UIView *videoView;
-/** mpv for YouTube trailers while AetherEngine is the player; see useTrailerPlayerFor:. */
-@property (nonatomic, strong, nullable) id<AIOPlayerEngine> trailers;
 /** The video is in a box of the page, by the page's `player-frame`. */
 @property (nonatomic) BOOL videoFramed;
 @property (nonatomic, strong) AIOWebView *web;
@@ -576,8 +574,7 @@ static const CGFloat kSwipeStepY = 150;
 - (void)makePlayer {
     [self.fallback shutdown];
     self.fallback = nil;
-    [self.trailers shutdown];
-    self.trailers = nil;
+
     [self.player shutdown];
     NSString *name = self.engineName;
     if ([name isEqualToString:@"vlc"]) {
@@ -659,7 +656,6 @@ static const CGFloat kSwipeStepY = 150;
         self.lastLoad = message;
         self.lastPositionMs = [message[@"startMs"] isKindOfClass:NSNumber.class] ? [message[@"startMs"] doubleValue] : 0;
         self.fellBack = NO;
-        [self useTrailerPlayerFor:message];
     } else if ([type isEqualToString:@"player-set"]) {
         // Track ids differ between the players, so those stay out.
         for (NSString *key in @[ @"paused", @"volume", @"muted", @"speed", @"subtitleDelayMs" ]) {
@@ -680,27 +676,6 @@ static const CGFloat kSwipeStepY = 150;
     return YES;
 }
 
-/**
- * A YouTube trailer is an HLS playlist with its sound apart from its picture,
- * which mpv plays; AetherEngine showed it black in a box and silent whole.
- */
-- (void)useTrailerPlayerFor:(NSDictionary *)load {
-    if (![self.engineName isEqualToString:@"aether"]) return;
-    NSString *host = [NSURL URLWithString:[load[@"url"] isKindOfClass:NSString.class] ? load[@"url"] : @""].host.lowercaseString;
-    if (!([host hasSuffix:@"googlevideo.com"] || [host hasSuffix:@"youtube.com"])) return;
-    if (!self.trailers) {
-        self.trailers = [[AIOMPVPlayer alloc] initWithHost:self.videoView];
-        [self connect:self.trailers];
-    }
-    self.active = self.trailers;
-    for (NSDictionary *message in @[ self.lastSettings ?: @{}, self.lastStyle ?: @{} ]) {
-        if ([message[@"type"] isKindOfClass:NSString.class]) [self.trailers handle:message[@"type"] message:message];
-    }
-    NSMutableDictionary *set = [self.lastSet mutableCopy] ?: [NSMutableDictionary dictionary];
-    set[@"type"] = @"player-set";
-    [self.trailers handle:@"player-set" message:set];
-}
-
 - (void)useChosenPlayer {
     if (self.active == self.player) return;
     [self.active handle:@"player-stop" message:@{ @"type": @"player-stop" }];
@@ -717,7 +692,7 @@ static const CGFloat kSwipeStepY = 150;
     BOOL failed = [type isEqualToString:@"player-ended"] && [message[@"reason"] isEqual:@"error"];
     BOOL linkRefused = message[@"status"] != nil;
     // Not a live channel, which the page reopens itself, nor a trailer in a box, which gives way to the next.
-    BOOL pageRecovers = [self.lastLoad[@"live"] isEqual:@YES] || self.videoFramed || engine == self.trailers;
+    BOOL pageRecovers = [self.lastLoad[@"live"] isEqual:@YES] || self.videoFramed;
     if (failed && !linkRefused && !pageRecovers && !self.fellBack && self.lastLoad
         && ![engine isKindOfClass:AIOVLCPlayer.class]) {
         [self fallBackToVLC];

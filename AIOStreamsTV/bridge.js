@@ -138,6 +138,11 @@
   Object.defineProperty(window, '__aioReceive', {
     value(message) {
       if (skipped && message?.type === 'player-state') skipLanded(message);
+      // A trailer that ends by itself is no longer playing, though the page sends no stop.
+      if (message?.type === 'player-ended') {
+        playing = false;
+        inPlayer = false;
+      }
       for (const listener of listeners) {
         try {
           listener(message);
@@ -213,6 +218,9 @@
     (el.getAttribute('role') === 'combobox' && !!el.getAttribute('aria-activedescendant'));
   let editing = null;
   let swallowed = false;
+  /** Where OK went down, and when; see up(). The page's holds take 500 ms. */
+  let heldOn = null;
+  const HOLD_MS = 450;
 
   /** A control the remote is on, as the page's own keyboardFocus() reads it. */
   const keyboardFocus = () => {
@@ -389,6 +397,7 @@
     value: Object.freeze({
       down(name, repeat) {
         const el = target();
+        if (name === 'Enter' && !repeat) heldOn = { el, at: Date.now() };
         // tvOS has no keyboard for a web page, so the app shows its own.
         lastPress = { name, at: Date.now() };
         if (name === 'Enter' && isTextField(el) && !picksFromList(el)) {
@@ -413,6 +422,22 @@
         }
         const as = sent.get(name) ?? name;
         sent.delete(name);
+        /*
+         * OK held until a menu opened, with focus now in it: letting go must
+         * only end the hold. The page takes a window blur as that, dropping
+         * the press it held back, which would otherwise pick the menu's first
+         * entry.
+         */
+        const held = name === 'Enter' ? heldOn : null;
+        if (name === 'Enter') heldOn = null;
+        const now = document.activeElement;
+        if (
+          held && Date.now() - held.at >= HOLD_MS && now !== held.el &&
+          now?.closest?.('[role=menu], [role=dialog], [role=alertdialog], [role=listbox]')
+        ) {
+          window.dispatchEvent(new Event('blur'));
+          return;
+        }
         key('keyup', as);
       },
       /** Each change on the app's search keyboard, as it is typed. */
