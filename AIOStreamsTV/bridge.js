@@ -64,8 +64,9 @@
       framed = !!message.frame;
       // A trailer opened whole is the player; back in its box, the remote is the page's again.
       inPlayer = !framed && playing;
-      // The page's pixels aren't the screen's points where the page is zoomed.
-      message = { ...message, viewport: innerWidth };
+      // The page sends the box already multiplied by its zoom (it lays out 1280 wide
+      // on a TV); the app scales by whatever of the screen's width that leaves.
+      message = { ...message, viewport: innerWidth * (window.visualViewport?.scale ?? 1) };
     }
     if (message?.type === 'player-load') playing = true;
     else if (message?.type === 'player-stop') playing = false;
