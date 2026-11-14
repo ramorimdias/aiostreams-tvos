@@ -70,6 +70,9 @@
     }
     if (message?.type === 'player-load') playing = true;
     else if (message?.type === 'player-stop') playing = false;
+    // Under the player nothing of the page shows; back out of it, its pictures return.
+    if (message?.type === 'player-load' || message?.type === 'player-stop')
+      setTimeout(() => window.__aioTV && soonSweep(), 600);
     if (message?.type === 'player-seek' && skipped && skipped.toMs == null)
       skipped.toMs = Number(message.positionMs);
     handler.postMessage(JSON.stringify(message));
@@ -393,6 +396,122 @@
     true
   );
 
+  /*
+   * Smoothness and memory, each behind a switch here. The page itself stays
+   * as the server sends it.
+   */
+  const STEADY_ROWS = true;
+  const SOLID_PANELS = true;
+  const RELEASE_PICTURES = true;
+
+  /*
+   * A row's placeholder cards are pictures only, and the cards that replace
+   * them have their captions beneath, so every row that loads during a scroll
+   * pushes what is under it down. The placeholders get the caption's height,
+   * which the page gives each row as --poster-text (3.25rem under wide cards).
+   */
+  if (STEADY_ROWS) {
+    const style = document.createElement('style');
+    style.textContent =
+      '[data-tv] [data-ui=media-row-item]>.UI-Skeleton__root{margin-bottom:var(--poster-text,0px)}' +
+      '[data-tv] [data-ui=media-row-item]>.UI-Skeleton__root.aspect-video{margin-bottom:3.25rem}';
+    const add = () => (document.head || document.documentElement)?.appendChild(style);
+    if (document.documentElement) add();
+    else document.addEventListener('readystatechange', add, { once: true });
+  }
+
+  /*
+   * The page's bars and panels are frosted glass unless set otherwise
+   * (Settings, Appearance, glass surface), which WebKit draws by blurring
+   * what is behind them on every frame of a scroll. Solid once, on an app
+   * that has never chosen; the page's own setting brings the glass back.
+   */
+  if (SOLID_PANELS) {
+    try {
+      const KEY = 'aiostreams-web-theme-glass-surface';
+      if (!localStorage.getItem('tvos-glass-defaulted')) {
+        localStorage.setItem('tvos-glass-defaulted', '1');
+        if (localStorage.getItem(KEY) === null) localStorage.setItem(KEY, JSON.stringify('solid'));
+      }
+    } catch {}
+  }
+
+  /*
+   * WebKit keeps every mounted picture decoded, so a long scroll fills its
+   * process until tvOS ends it and the page loads again. A picture more than
+   * three screens from the screen, or anywhere on the pages while the player
+   * covers them, is swapped for a blank one, which lets WebKit drop it, and
+   * put back within two screens. Home kept out of sight under another page
+   * is left as it is, so going back to it shows it at once (and measuring a
+   * page the browser has stopped drawing would make it lay that page out).
+   * Rects are read together and pictures changed after, at most twice a
+   * second while something moves and once after it stops, so a sweep lays
+   * nothing out.
+   */
+  const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+  const released = new WeakMap();
+  const sweep = (keep = 2, drop = 3) => {
+    const w = innerWidth;
+    const h = innerHeight;
+    if (!w || !h) return;
+    const all = inPlayer;
+    const marks = [];
+    for (const img of document.images) {
+      const held = released.get(img);
+      const src = img.getAttribute('src') || '';
+      if (held && src !== BLANK) {
+        // The page gave it another picture meanwhile.
+        released.delete(img);
+        continue;
+      }
+      if (!held && (!src || src.startsWith('data:'))) continue;
+      const covered = all && img.closest('[data-ui=shell]');
+      if (!covered && img.closest('[data-page][inert]')) continue;
+      const box = covered ? null : img.getBoundingClientRect();
+      // Not drawn at all (a closed panel's): nothing to measure, so left alone.
+      if (box && !box.width && !box.height) continue;
+      const away = covered
+        ? Infinity
+        : Math.max(
+            (box.top > h ? box.top - h : box.bottom < 0 ? -box.bottom : 0) / h,
+            (box.left > w ? box.left - w : box.right < 0 ? -box.right : 0) / w
+          );
+      if (held ? away <= keep : away > drop) marks.push([img, held]);
+    }
+    for (const [img, held] of marks) {
+      if (held) {
+        released.delete(img);
+        if (held.srcset !== null) img.setAttribute('srcset', held.srcset);
+        img.setAttribute('src', held.src);
+      } else {
+        released.set(img, { src: img.getAttribute('src'), srcset: img.getAttribute('srcset') });
+        img.removeAttribute('srcset');
+        img.setAttribute('src', BLANK);
+      }
+    }
+  };
+  let sweepTimer = 0;
+  let sweptAt = 0;
+  const soonSweep = () => {
+    if (!RELEASE_PICTURES) return;
+    clearTimeout(sweepTimer);
+    const now = Date.now();
+    if (now - sweptAt >= 500) {
+      sweptAt = now;
+      sweep();
+    }
+    // Where a scroll comes to rest.
+    sweepTimer = setTimeout(() => {
+      sweptAt = Date.now();
+      sweep();
+    }, 400);
+  };
+  if (RELEASE_PICTURES) {
+    // Capture: the page and each row scroll in containers of their own.
+    document.addEventListener('scroll', soonSweep, { capture: true, passive: true });
+    addEventListener('hashchange', soonSweep);
+  }
+
   Object.defineProperty(window, '__aioTV', {
     value: Object.freeze({
       down(name, repeat) {
@@ -412,6 +531,8 @@
         sent.set(name, as);
         const toSubtitles = name === 'ArrowDown' && !repeat && inPlayer && !visibleFocus() && !scrubbing();
         key('keydown', as, repeat);
+        // A page that glides by transforms alone fires no scroll event.
+        if (name.startsWith('Arrow')) soonSweep();
         // Down brings the controls with the subtitles button picked out, not opened.
         if (toSubtitles) focusSubtitles();
       },
@@ -439,6 +560,10 @@
           return;
         }
         key('keyup', as);
+      },
+      /** tvOS is short of memory: all but the screen and half of one around it lets go of its pictures. */
+      trim() {
+        if (RELEASE_PICTURES) sweep(0.25, 0.5);
       },
       /** Each change on the app's search keyboard, as it is typed. */
       live(value) {

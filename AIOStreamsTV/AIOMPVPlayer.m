@@ -67,6 +67,9 @@ static id AIOJSON(const char *text) {
 /** The reader's first error since the file started, which says why loading failed. */
 @property (nonatomic, copy, nullable) NSString *cause;
 @property (nonatomic) BOOL playing;
+/** The file's track whose lines the page listens to; see watchLines:. */
+@property (nonatomic, copy, nullable) NSString *linesTrack;
+@property (nonatomic, copy, nullable) NSString *lastLine;
 /** The mute the page asked for, which a stop's silencing doesn't change. */
 @property (nonatomic) BOOL wantMuted;
 @end
@@ -187,6 +190,8 @@ static void AIOSetFlagNow(mpv_handle *mpv, const char *name, BOOL on) {
         @[ @"track-list", @(MPV_FORMAT_STRING) ],
         @[ @"chapter-list", @(MPV_FORMAT_STRING) ],
         @[ @"video-params", @(MPV_FORMAT_STRING) ],
+        @[ @"secondary-sub-start", @(MPV_FORMAT_DOUBLE) ],
+        @[ @"secondary-sub-end", @(MPV_FORMAT_DOUBLE) ],
     ];
     for (NSArray *property in observed) {
         mpv_observe_property(mpv, 0, [property[0] UTF8String], (mpv_format)[property[1] intValue]);
@@ -276,10 +281,12 @@ static void AIOSet(mpv_handle *mpv, NSString *name, NSString *value) {
     } else if ([type isEqualToString:@"player-thumbnail"]) {
         NSString *url = AIOStr(message[@"url"]);
         if (url) [self.thumbnails want:url headers:message[@"headers"] positionMs:AIONum(message[@"positionMs"])];
+    } else if ([type isEqualToString:@"player-subtitle-lines"]) {
+        [self watchLines:AIOStr(message[@"track"])];
     } else if ([type isEqualToString:@"player-subtitle-index"]) {
         self.send(@{ @"type": @"player-subtitle-index", @"tracks": NSNull.null });
     } else if ([type hasPrefix:@"player-"]) {
-        // player-subtitle-lines, player-controls, player-engine, player-retry:
+        // player-controls, player-engine, player-retry:
         // nothing on tvOS.
     } else if ([type isEqualToString:@"subtitle-file"]) {
         [self addSubtitleFile:message];
@@ -614,6 +621,37 @@ static BOOL AIOIsColour(NSString *text) {
     if (reader && !self.cause && text.length && log->log_level <= MPV_LOG_LEVEL_ERROR) self.cause = text;
 }
 
+/**
+ * The page lines an added subtitle up with one of the file's own, whose lines
+ * it asks for as they play: that track plays as mpv's secondary subtitle,
+ * hidden, and each of its lines is reported once.
+ */
+- (void)watchLines:(nullable NSString *)track {
+    BOOL on = track.intValue > 0;
+    NSString *sid = on ? @(track.intValue).stringValue : @"no";
+    [self withMPV:^(mpv_handle *mpv) {
+        self.linesTrack = on ? sid : nil;
+        self.lastLine = nil;
+        AIOSet(mpv, @"secondary-sub-visibility", @"no");
+        AIOSet(mpv, @"secondary-sid", sid);
+    }];
+}
+
+/** On mpv's queue, as either of the secondary subtitle's times changes: both are read, so they belong together. */
+- (void)lineChanged {
+    mpv_handle *mpv = self.mpv;
+    if (!self.linesTrack || !mpv) return;
+    double start = 0, end = 0;
+    if (mpv_get_property(mpv, "secondary-sub-start", MPV_FORMAT_DOUBLE, &start) < 0) return;
+    if (mpv_get_property(mpv, "secondary-sub-end", MPV_FORMAT_DOUBLE, &end) < 0) return;
+    if (end <= start) return;
+    NSString *key = [NSString stringWithFormat:@"%.0f:%.0f", start * 1000, end * 1000];
+    if ([key isEqualToString:self.lastLine]) return;
+    self.lastLine = key;
+    [self post:@{ @"type": @"player-subtitle-lines", @"track": self.linesTrack,
+                  @"lines": @[ @{ @"startMs": @(start * 1000), @"endMs": @(end * 1000) } ] }];
+}
+
 - (void)propertyChanged:(mpv_event_property *)property {
     NSString *name = [NSString stringWithUTF8String:property->name];
     void *data = property->data;
@@ -622,7 +660,9 @@ static BOOL AIOIsColour(NSString *text) {
     BOOL flag = has && property->format == MPV_FORMAT_FLAG ? *(int *)data != 0 : NO;
     const char *text = has && property->format == MPV_FORMAT_STRING ? *(char **)data : NULL;
 
-    if ([name isEqualToString:@"time-pos"]) {
+    if ([name hasPrefix:@"secondary-sub-"]) {
+        [self lineChanged];
+    } else if ([name isEqualToString:@"time-pos"]) {
         if (!has) return;
         self.positionMs = number * 1000;
         [self hold:@{ @"positionMs": @(self.positionMs) }];

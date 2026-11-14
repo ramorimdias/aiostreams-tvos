@@ -58,6 +58,10 @@ public final class AIOAetherPlayer: NSObject {
     private var sentPositionAt: CFTimeInterval = 0
     private var sentTracks: String?
 
+    /// The file's track whose lines the page is listening to, and those already sent.
+    private var linesTrack: String?
+    private var sentLines = Set<String>()
+
     private var thumbnailTask: Task<Void, Never>?
     private var statsTimer: Timer?
 
@@ -116,11 +120,12 @@ public final class AIOAetherPlayer: NSObject {
         case "player-subtitle-add": addSubtitle(message)
         case "player-stats-overlay": showStats(message["page"] as? String)
         case "player-thumbnail": thumbnail(message)
+        case "player-subtitle-lines": watchLines(message["track"])
         case "player-subtitle-index":
             send(["type": "player-subtitle-index", "tracks": NSNull()])
         case "subtitle-file": addSubtitleFile(message)
         default:
-            // player-subtitle-lines, player-controls, player-engine, player-retry: nothing here.
+            // player-controls, player-engine, player-retry: nothing here.
             return type.hasPrefix("player-")
         }
         return true
@@ -178,6 +183,8 @@ public final class AIOAetherPlayer: NSObject {
         loaded = false
         ended = false
         externalURLs = [:]
+        linesTrack = nil
+        sentLines = []
         sentTracks = nil
         subtitleMode = message["subtitleMode"] as? String ?? "default"
 
@@ -421,6 +428,39 @@ public final class AIOAetherPlayer: NSObject {
         sendTracks(force: true)
     }
 
+    // MARK: - Subtitle timing
+
+    /*
+     * The page lines an added subtitle up with one of the file's own: it asks
+     * for that track's lines as they play (`player-subtitle-lines`), and sets
+     * the delay itself. The track is decoded beside the one shown, as the
+     * engine's secondary subtitle, and never drawn.
+     */
+    private func watchLines(_ track: Any?) {
+        guard let engine else { return }
+        sentLines = []
+        guard let text = track as? String, let id = Int(text) else {
+            linesTrack = nil
+            engine.clearSecondarySubtitle()
+            return
+        }
+        linesTrack = text
+        engine.selectSecondarySubtitleTrack(index: id)
+    }
+
+    /// Each line once, as `{startMs, endMs}` (the page's `Span`); the page keeps what it has heard.
+    private func linesChanged(_ cues: [SubtitleCue]) {
+        guard let track = linesTrack else { return }
+        var lines: [[String: Double]] = []
+        for cue in cues where cue.endTime > cue.startTime {
+            let key = "\(Int((cue.startTime * 1000).rounded())):\(Int((cue.endTime * 1000).rounded()))"
+            guard sentLines.insert(key).inserted else { continue }
+            lines.append(["startMs": cue.startTime * 1000, "endMs": cue.endTime * 1000])
+        }
+        guard !lines.isEmpty else { return }
+        send(["type": "player-subtitle-lines", "track": track, "lines": lines])
+    }
+
     // MARK: - Seek-bar pictures
 
     /// The engine's still from what it already holds, or its keyframe ladder: no second connection.
@@ -510,6 +550,9 @@ public final class AIOAetherPlayer: NSObject {
         }.store(in: &observers)
         engine.$activeSubtitleTrackIndex.removeDuplicates().sink { [weak self] id in
             self?.sendState(["subtitle": id.map { String($0) } ?? NSNull()])
+        }.store(in: &observers)
+        engine.$secondarySubtitleCues.sink { [weak self] cues in
+            self?.linesChanged(cues)
         }.store(in: &observers)
         engine.$mediaChapters.sink { [weak self] chapters in
             self?.sendChapters(chapters)

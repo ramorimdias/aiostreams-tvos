@@ -1098,6 +1098,12 @@ static const CGFloat kSwipeStepY = 150;
 
 #pragma mark - App state
 
+/** tvOS warns before it ends the page's process for memory: the page lets go of the pictures out of sight. */
+- (void)didReceiveMemoryWarning {
+    [super didReceiveMemoryWarning];
+    [self callTV:@"trim()"];
+}
+
 - (void)appWillResignActive {
     [self saveWebStorage];
     [self stopRepeating];
