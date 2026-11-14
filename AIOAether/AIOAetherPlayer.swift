@@ -61,6 +61,9 @@ public final class AIOAetherPlayer: NSObject {
     /// The file's track whose lines the page is listening to, and those already sent.
     private var linesTrack: String?
     private var sentLines = Set<String>()
+    private var linesTask: Task<Void, Never>?
+    /// The file's subtitle index, read once per file; nil inside for a file without one.
+    private var fileIndex: (url: String, timelines: Task<[AIOSubtitleIndex.Timeline]?, Never>)?
 
     private var thumbnailTask: Task<Void, Never>?
     private var statsTimer: Timer?
@@ -121,8 +124,7 @@ public final class AIOAetherPlayer: NSObject {
         case "player-stats-overlay": showStats(message["page"] as? String)
         case "player-thumbnail": thumbnail(message)
         case "player-subtitle-lines": watchLines(message["track"])
-        case "player-subtitle-index":
-            send(["type": "player-subtitle-index", "tracks": NSNull()])
+        case "player-subtitle-index": sendSubtitleIndex()
         case "subtitle-file": addSubtitleFile(message)
         default:
             // player-controls, player-engine, player-retry: nothing here.
@@ -439,13 +441,81 @@ public final class AIOAetherPlayer: NSObject {
     private func watchLines(_ track: Any?) {
         guard let engine else { return }
         sentLines = []
+        linesTask?.cancel()
         guard let text = track as? String, let id = Int(text) else {
             linesTrack = nil
             engine.clearSecondarySubtitle()
             return
         }
         linesTrack = text
-        engine.selectSecondarySubtitleTrack(index: id)
+        let current = generation
+        linesTask = Task { [weak self] in
+            // Every line at once where the file's index has them; as they play otherwise.
+            let indexed = await self?.subtitleIndex()?[id] ?? []
+            guard let self, !Task.isCancelled, current == self.generation, self.linesTrack == text else { return }
+            if indexed.isEmpty {
+                engine.selectSecondarySubtitleTrack(index: id)
+            } else {
+                self.send(["type": "player-subtitle-lines", "track": text,
+                           "lines": indexed.map { ["startMs": $0.start, "endMs": $0.end] }])
+            }
+        }
+    }
+
+    /// The file's index, read once per file and given nine seconds: the page waits twelve.
+    private func subtitleIndex() async -> [Int: [(start: Double, end: Double)]]? {
+        guard let engine, let load = lastLoad, load["live"] as? Bool != true,
+              let text = url, let source = URL(string: text) else { return nil }
+        if fileIndex?.url != text {
+            let headers = headers(load["headers"])
+            fileIndex = (text, Task {
+                await withTaskGroup(of: [AIOSubtitleIndex.Timeline]?.self) { group in
+                    group.addTask {
+                        do {
+                            return try await AIOSubtitleIndex.read(url: source, headers: headers)
+                        } catch {
+                            NSLog("[aether] no index of the file's subtitles: %@", String(describing: error))
+                            return nil
+                        }
+                    }
+                    group.addTask {
+                        try? await Task.sleep(nanoseconds: 9_000_000_000)
+                        return nil
+                    }
+                    let first = await group.next() ?? nil
+                    group.cancelAll()
+                    return first
+                }
+            })
+        }
+        guard let timelines = await fileIndex?.timelines.value, !timelines.isEmpty, url == text else { return nil }
+        // The engine's tracks come with its own read of the file, which may still be going on.
+        func own() -> [TrackInfo] { engine.subtitleTracks.filter { !$0.isExternal }.sorted { $0.id < $1.id } }
+        var tracks = own()
+        for _ in 0..<12 where tracks.isEmpty && url == text {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            tracks = own()
+        }
+        // Both list the file's subtitles in file order; they pair only when they count the same kinds.
+        let pictures: Set<String> = ["hdmv_pgs_subtitle", "pgssub", "dvd_subtitle", "dvdsub", "dvb_subtitle", "dvbsub"]
+        guard tracks.count == timelines.count,
+              zip(tracks, timelines).allSatisfy({ pictures.contains($0.codec.lowercased()) == $1.isPicture }) else {
+            NSLog("[aether] the file's index (%d subtitles) doesn't pair with the player's (%d)",
+                  timelines.count, tracks.count)
+            return nil
+        }
+        return Dictionary(uniqueKeysWithValues: zip(tracks, timelines).map { ($0.id, $1.lines) })
+    }
+
+    private func sendSubtitleIndex() {
+        Task { [weak self] in
+            let index = await self?.subtitleIndex()
+            var tracks: [String: Any] = [:]
+            for (id, lines) in index ?? [:] {
+                tracks[String(id)] = lines.map { ["startMs": $0.start, "endMs": $0.end] }
+            }
+            self?.send(["type": "player-subtitle-index", "tracks": index == nil ? NSNull() : tracks])
+        }
     }
 
     /// Each line once, as `{startMs, endMs}` (the page's `Span`); the page keeps what it has heard.
