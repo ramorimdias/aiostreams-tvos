@@ -622,6 +622,8 @@ static const CGFloat kSwipeStepY = 150;
         video.hidden = NO;
         video.layer.mask = nil;
         video.frame = self.view.bounds;
+        // The player: under the page, which draws its controls over it.
+        [self.view insertSubview:video belowSubview:self.web];
         return;
     }
     CGFloat viewport = [message[@"viewport"] isKindOfClass:NSNumber.class] ? [message[@"viewport"] doubleValue] : 0;
@@ -638,7 +640,19 @@ static const CGFloat kSwipeStepY = 150;
     } else {
         place();
     }
-    video.hidden = [frame[@"hidden"] isEqual:@YES];
+    /*
+     * `hidden` is "under something the page shows over it", as on Android:
+     * the video goes under the page rather than away. A trailer behind the
+     * hero or a title's page is always so, and shows through the hole the
+     * page cuts for it; hiding it there left the hole black. Otherwise the box
+     * is drawn over the page, which leaves no hole for it.
+     */
+    video.hidden = NO;
+    if ([frame[@"hidden"] isEqual:@YES]) {
+        [self.view insertSubview:video belowSubview:self.web];
+    } else {
+        [self.view insertSubview:video aboveSubview:self.web];
+    }
     // The corners the page's box has.
     CGFloat top = number(@"radius") * scale, bottom = number(@"bottomRadius") * scale;
     if (top > 0 || bottom > 0) {
