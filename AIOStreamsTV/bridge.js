@@ -117,6 +117,67 @@
   addEventListener('blur', (e) => e.target === window && diag('window', 'blur'));
   addEventListener('focus', (e) => e.target === window && diag('window', 'focus'));
   document.addEventListener('visibilitychange', () => diag('window', document.visibilityState));
+  /*
+   * On a TV the page mounts a row, and starts its artwork, only within 600px
+   * of the screen: hooks/use-in-view.ts measures by hand against
+   * new DOMRect(0, 0, innerWidth, innerHeight), so artwork still loading as
+   * focus arrives fades in under it. That screen is made a screen taller each
+   * way, so the rows ahead are ready first. It leans on how the page builds
+   * that rect, so it can be turned off in the app menu (Look-ahead).
+   */
+  let lookAhead = true;
+  try {
+    lookAhead = localStorage.getItem('tvos-look-ahead') !== 'off';
+  } catch {}
+  if (lookAhead) {
+    try {
+      window.DOMRect = new Proxy(window.DOMRect, {
+        construct(type, args, newTarget) {
+          const [x, y, w, h] = args;
+          if (args.length === 4 && x === 0 && y === 0 && w === innerWidth && h === innerHeight)
+            args = [0, -h, w, h * 3];
+          return Reflect.construct(type, args, newTarget);
+        },
+      });
+    } catch {}
+  }
+  diag('input', `look-ahead ${lookAhead ? 'on' : 'off'}`);
+
+  /*
+   * Artwork that finishes loading where it can be seen fades in in view. The
+   * log names each one that did, with how long it took, and sums up every few
+   * seconds, to tell a late start (rows mounted near the screen) from a slow
+   * server.
+   */
+  const art = { loaded: 0, seen: 0, waits: [] };
+  document.addEventListener(
+    'load',
+    (e) => {
+      const img = e.target;
+      if (!(img instanceof HTMLImageElement) || img.getAttribute('data-ui') !== 'artwork') return;
+      const src = img.currentSrc || img.src;
+      if (!src || src.startsWith('data:')) return;
+      art.loaded++;
+      const r = img.getBoundingClientRect();
+      if (!(r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth)) return;
+      art.seen++;
+      const timing = performance.getEntriesByName(src).pop();
+      const ms = timing ? Math.round(timing.duration) : -1;
+      art.waits.push(ms);
+      const kb = timing?.transferSize ? `, ${Math.round(timing.transferSize / 1024)} KB` : '';
+      diag('artwork', `arrived in view: ${ms < 0 ? '?' : ms} ms to load${kb}, at y ${Math.round(r.top)}`);
+    },
+    true
+  );
+  setInterval(() => {
+    if (!art.loaded) return;
+    const waits = art.waits.filter((ms) => ms >= 0).sort((a, b) => a - b);
+    const times = waits.length ? `, median ${waits[waits.length >> 1]} ms, slowest ${waits[waits.length - 1]} ms` : '';
+    diag('artwork', `${art.loaded} loaded, ${art.seen} of them in view${times}`);
+    art.loaded = art.seen = 0;
+    art.waits = [];
+  }, 5000);
+
   addEventListener('gamepadconnected', (e) => diag('input', `gamepad connected: ${e.gamepad?.id} (${e.gamepad?.mapping || 'no mapping'})`));
   addEventListener('unhandledrejection', (e) => diag('error', `unhandled rejection: ${e.reason?.stack || e.reason}`));
   for (const level of ['error', 'warn']) {

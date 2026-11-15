@@ -26,6 +26,8 @@ static const NSUInteger kStorageMaxValue = 100000;
 /** `mpv` (the default) or `vlc`. */
 static NSString *const kEngineKey = @"playerEngine";
 static NSString *const kAetherDefaultKey = @"aetherIsDefault";
+/** `off` turns off bridge.js's look-ahead, which the page reads from its localStorage. */
+static NSString *const kLookAheadKey = @"lookAhead";
 /** Held this long, Play/Pause opens the app's own menu instead. */
 static const NSTimeInterval kMenuHold = 1.0;
 static const NSTimeInterval kRepeatDelay = 0.45;
@@ -515,6 +517,18 @@ static const CGFloat kSwipeStepY = 150;
             [self flashStatus:[NSString stringWithFormat:@"The app's log is at\n%@\non this network.", diagnostics.address]];
         }
         [self.web focusPage];
+    }]];
+    BOOL ahead = ![[NSUserDefaults.standardUserDefaults stringForKey:kLookAheadKey] isEqualToString:@"off"];
+    [menu addAction:[UIAlertAction actionWithTitle:ahead ? @"Look-ahead: on" : @"Look-ahead: off"
+                                             style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        NSString *next = ahead ? @"off" : @"on";
+        [NSUserDefaults.standardUserDefaults setObject:next forKey:kLookAheadKey];
+        AIOLog(@"app", @"look-ahead %@", next);
+        // bridge.js reads it as the page starts, so the page loads again.
+        NSString *script = [NSString stringWithFormat:@"localStorage.setItem('tvos-look-ahead', '%@')", next];
+        [self.web evaluateJavaScript:script completion:^(id result) {
+            [self loadServer];
+        }];
     }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
         [self.web focusPage];
