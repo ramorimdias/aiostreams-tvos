@@ -429,8 +429,8 @@
     return PLAYER_KEYS[name];
   };
 
-  const key = (type, name, repeat) => {
-    const el = target();
+  const key = (type, name, repeat, at = target()) => {
+    const el = at;
     const event = new KeyboardEvent(type, {
       key: name,
       code: name === ' ' ? 'Space' : name,
@@ -651,9 +651,11 @@
         sent.delete(name);
         /*
          * OK held until a menu opened, with focus now in it: letting go must
-         * only end the hold. The page takes a window blur as that, dropping
-         * the press it held back, which would otherwise pick the menu's first
-         * entry.
+         * only end the hold, which the page ends where its keydown went (its
+         * window keyup listener takes the release there and nothing else sees
+         * it). The release goes to that element, so the menu doesn't get it,
+         * and focus stays in the menu. A blur here used to end the hold, but
+         * it also closed the menu.
          */
         const held = name === 'Enter' ? heldOn : null;
         if (name === 'Enter') heldOn = null;
@@ -662,8 +664,8 @@
           held && Date.now() - held.at >= HOLD_MS && now !== held.el &&
           now?.closest?.('[role=menu], [role=dialog], [role=alertdialog], [role=listbox]')
         ) {
-          diag('key', `Enter let go in ${describe(now)} after a hold: ends the hold only`);
-          window.dispatchEvent(new Event('blur'));
+          diag('key', `Enter let go after a hold that opened ${describe(now)}: ends the hold on ${describe(held.el)}`);
+          if (held.el.isConnected) key('keyup', as, false, held.el);
           return;
         }
         key('keyup', as);
