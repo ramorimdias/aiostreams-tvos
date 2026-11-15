@@ -117,6 +117,7 @@
   addEventListener('blur', (e) => e.target === window && diag('window', 'blur'));
   addEventListener('focus', (e) => e.target === window && diag('window', 'focus'));
   document.addEventListener('visibilitychange', () => diag('window', document.visibilityState));
+  addEventListener('gamepadconnected', (e) => diag('input', `gamepad connected: ${e.gamepad?.id} (${e.gamepad?.mapping || 'no mapping'})`));
   addEventListener('unhandledrejection', (e) => diag('error', `unhandled rejection: ${e.reason?.stack || e.reason}`));
   for (const level of ['error', 'warn']) {
     const original = console[level];
@@ -254,6 +255,14 @@
     pip: false,
     // The video can play in a box of the page, which trailers that start by themselves need.
     miniPlayer: true,
+    /*
+     * The app reads the remote itself (the keys below), so the page mustn't
+     * poll gamepads: tvOS's WebKit lists the Siri Remote as one, and each OK
+     * then reached the page twice, as Enter and as GamepadA, so a switch
+     * flipped back and a pick list closed as it opened. Its touch surface
+     * also counted as a stick, and the poll ran on every frame.
+     */
+    gamepadButtons: true,
     device: __DEVICE__,
     deviceId: __DEVICE_ID__,
     send,
