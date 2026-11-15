@@ -71,6 +71,12 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Version $version, build $build"
 
+      # WebKit runs bridge.js before the page, and one syntax error stops all of
+      # it: the page then loads as a browser's, signed out and deaf to the remote.
+      # Its placeholders are bare identifiers, so the file parses as it is.
+      - name: Check bridge.js
+        run: node --check AIOStreamsTV/bridge.js
+
       - name: Tools
         run: |
           brew install xcodegen xcbeautify

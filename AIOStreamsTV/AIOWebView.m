@@ -219,6 +219,18 @@ static void AIOSendBool(id target, NSString *selectorName, BOOL value) {
     ((void (*)(id, SEL, id, id))objc_msgSend)(self.webView, sel, script, nil);
 }
 
+- (void)evaluateJavaScript:(NSString *)script completion:(void (^)(id _Nullable result))completion {
+    SEL sel = NSSelectorFromString(@"evaluateJavaScript:completionHandler:");
+    if (!self.webView || ![self.webView respondsToSelector:sel]) {
+        completion(nil);
+        return;
+    }
+    void (^handler)(id, NSError *) = ^(id result, NSError *error) {
+        completion(error ? nil : result);
+    };
+    ((void (*)(id, SEL, id, id))objc_msgSend)(self.webView, sel, script, handler);
+}
+
 - (void)focusPage {
     UIView *view = (UIView *)self.webView;
     if (!view) return;

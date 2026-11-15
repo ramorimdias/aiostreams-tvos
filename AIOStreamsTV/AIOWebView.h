@@ -25,6 +25,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)loadURL:(NSURL *)url;
 - (void)reload;
 - (void)evaluateJavaScript:(NSString *)script;
+/** The script's result (nil on an error), on the main thread. */
+- (void)evaluateJavaScript:(NSString *)script completion:(void (^)(id _Nullable result))completion;
 /** Makes the page focused and active, which `:focus` and `:focus-visible` need. */
 - (void)focusPage;
 

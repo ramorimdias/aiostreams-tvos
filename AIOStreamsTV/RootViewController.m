@@ -5,6 +5,7 @@
 
 
 #import "AIOAetherEngine.h"
+#import "AIODiagnostics.h"
 #import "AIOYouTube.h"
 #import "AIOMPVPlayer.h"
 #import "AIONowPlaying.h"
@@ -198,6 +199,7 @@ static const CGFloat kSwipeStepY = 150;
     };
     self.web.onProcessEnded = ^{
         // Most often memory; the page loads again where it was.
+        AIOLog(@"page", @"WebKit's process ended; reloading");
         [weakSelf flashStatus:@"The page ran out of memory and reloaded."];
     };
     self.web.onLoadFailed = ^(NSString *error) {
@@ -205,6 +207,7 @@ static const CGFloat kSwipeStepY = 150;
         [weakSelf loadFailedWith:error];
     };
     self.pendingLinks = [NSMutableArray array];
+    [self connectDiagnostics];
     [self watchNetwork];
 
     if (!self.web.available) {
@@ -375,7 +378,9 @@ static const CGFloat kSwipeStepY = 150;
     self.connected = NO;
     self.linksReady = NO;
     [self showSplash];
-    [self.web loadURL:[self withSavedRoute:url]];
+    NSURL *start = [self withSavedRoute:url];
+    AIOLog(@"page", @"loading %@", start.absoluteString);
+    [self.web loadURL:start];
 }
 
 #pragma mark - Where the page was
@@ -404,6 +409,7 @@ static const CGFloat kSwipeStepY = 150;
 #pragma mark - Reaching the server
 
 - (void)loadSucceeded {
+    AIOLog(@"page", @"loaded");
     [self hideSplash];
     self.restoredRoute = YES;
     self.loadFailed = NO;
@@ -418,6 +424,7 @@ static const CGFloat kSwipeStepY = 150;
     NSUInteger count = sizeof(kRetryDelays) / sizeof(kRetryDelays[0]);
     NSTimeInterval delay = kRetryDelays[MIN(self.retries, count - 1)];
     self.retries++;
+    AIOLog(@"page", @"couldn't load: %@; again in %.0f s", error, delay);
     [self showStatus:[NSString stringWithFormat:
         @"Couldn't reach AIOStreams.\n%@\n\nTrying again in %.0f seconds. Hold Play/Pause for options.", error, delay]];
     [self.retryTimer invalidate];
@@ -500,9 +507,19 @@ static const CGFloat kSwipeStepY = 150;
             [self choosePlayer];
         });
     }]];
+    AIODiagnostics *diagnostics = AIODiagnostics.shared;
+    NSString *serving = diagnostics.serving ? [NSString stringWithFormat:@"Diagnostics: on, %@", diagnostics.address] : @"Diagnostics: off";
+    [menu addAction:[UIAlertAction actionWithTitle:serving style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [diagnostics setServing:!diagnostics.serving];
+        if (diagnostics.serving) {
+            [self flashStatus:[NSString stringWithFormat:@"The app's log is at\n%@\non this network.", diagnostics.address]];
+        }
+        [self.web focusPage];
+    }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
         [self.web focusPage];
     }]];
+    AIOLog(@"app", @"menu opened");
     [self presentViewController:menu animated:YES completion:nil];
 }
 
@@ -610,6 +627,9 @@ static const CGFloat kSwipeStepY = 150;
     CGFloat viewport = [message[@"viewport"] isKindOfClass:NSNumber.class] ? [message[@"viewport"] doubleValue] : 0;
     CGFloat scale = viewport > 0 ? self.view.bounds.size.width / viewport : 1;
     CGRect box = CGRectMake(number(@"x") * scale, number(@"y") * scale, number(@"width") * scale, number(@"height") * scale);
+    AIOLog(@"video", @"in a box: page %.0f,%.0f %.0f×%.0f, viewport %.0f, scale %.3f → screen %@%@",
+           number(@"x"), number(@"y"), number(@"width"), number(@"height"), viewport, scale,
+           NSStringFromCGRect(box), [frame[@"hidden"] isEqual:@YES] ? @", hidden" : @"");
     void (^place)(void) = ^{
         video.frame = box;
     };
@@ -693,6 +713,10 @@ static const CGFloat kSwipeStepY = 150;
     BOOL linkRefused = message[@"status"] != nil;
     // Not a live channel, which the page reopens itself, nor a trailer in a box, which gives way to the next.
     BOOL pageRecovers = [self.lastLoad[@"live"] isEqual:@YES] || self.videoFramed;
+    if ([type isEqualToString:@"player-ended"]) {
+        AIOLog(@"player", @"%@ ended: %@%@", NSStringFromClass([(NSObject *)engine class]), message[@"reason"] ?: @"?",
+               message[@"error"] ? [NSString stringWithFormat:@" (%@)", message[@"error"]] : @"");
+    }
     if (failed && !linkRefused && !pageRecovers && !self.fellBack && self.lastLoad
         && ![engine isKindOfClass:AIOVLCPlayer.class]) {
         [self fallBackToVLC];
@@ -702,6 +726,7 @@ static const CGFloat kSwipeStepY = 150;
 }
 
 - (void)fallBackToVLC {
+    AIOLog(@"player", @"%@ couldn't play the file; VLC takes over at %.0f ms", self.engineName, self.lastPositionMs);
     self.fellBack = YES;
     if (!self.fallback) {
         self.fallback = [self makeVLC];
@@ -722,6 +747,7 @@ static const CGFloat kSwipeStepY = 150;
 }
 
 - (void)switchPlayerTo:(NSString *)name {
+    AIOLog(@"app", @"player chosen: %@", name);
     [NSUserDefaults.standardUserDefaults setObject:name forKey:kEngineKey];
     [self makePlayer];
     // The page's player started on the other one; reloading starts it afresh.
@@ -833,9 +859,13 @@ static const CGFloat kSwipeStepY = 150;
             [weakSelf sendToPage:@{ @"type": @"youtube-resolved", @"request": request, @"url": url ?: NSNull.null }];
         }];
     } else if ([type isEqualToString:@"diagnostics"]) {
-        NSString *text = [NSString stringWithFormat:@"AIOStreams TV %@\ntvOS %@\nServer %@",
+        AIODiagnostics *diagnostics = AIODiagnostics.shared;
+        NSString *text = [NSString stringWithFormat:@"AIOStreams TV %@ (%@)\ntvOS %@\nServer %@\nPlayer %@\nDiagnostics %@",
                           [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"],
-                          UIDevice.currentDevice.systemVersion, [self serverURL].host ?: @"none"];
+                          [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleVersion"],
+                          UIDevice.currentDevice.systemVersion, [self serverURL].host ?: @"none",
+                          [self playerTitle:self.engineName],
+                          diagnostics.serving ? diagnostics.address : @"off (app menu: hold Play/Pause)"];
         [self sendToPage:@{ @"type": @"diagnostics", @"text": text }];
     } else if ([type isEqualToString:@"exit"]) {
         [self leaveApp];
@@ -850,6 +880,7 @@ static const CGFloat kSwipeStepY = 150;
         [self showKeyboard:message];
     } else if ([type isEqualToString:@"web-error"]) {
         NSLog(@"[page] %@", message[@"message"]);
+        AIOLog(@"page", @"error: %@", message[@"message"]);
     }
     // Others (watch-next, keyboard-completions, ...) have nothing on tvOS.
 }
@@ -1002,9 +1033,28 @@ static const CGFloat kSwipeStepY = 150;
     }
 }
 
+/** A press as the log names it. */
+- (NSString *)pressName:(UIPress *)press {
+    switch (press.type) {
+        case UIPressTypeUpArrow: return @"Up";
+        case UIPressTypeDownArrow: return @"Down";
+        case UIPressTypeLeftArrow: return @"Left";
+        case UIPressTypeRightArrow: return @"Right";
+        case UIPressTypeSelect: return @"Select";
+        case UIPressTypeMenu: return @"Menu";
+        case UIPressTypePlayPause: return @"PlayPause";
+        default: return [NSString stringWithFormat:@"type %ld", (long)press.type];
+    }
+}
+
 - (void)remotePress:(UIPress *)press {
     BOOL began = press.phase == UIPressPhaseBegan;
     BOOL ended = press.phase == UIPressPhaseEnded || press.phase == UIPressPhaseCancelled;
+    static NSString *const phases[] = { @"began", @"changed", @"stationary", @"ended", @"cancelled" };
+    NSInteger phase = press.phase;
+    if (phase != UIPressPhaseChanged && phase != UIPressPhaseStationary) {
+        AIOLog(@"remote", @"%@ %@", [self pressName:press], phase >= 0 && phase <= 4 ? phases[phase] : @(phase).stringValue);
+    }
     if (!began && !ended) return;
 
     if (press.type == UIPressTypeMenu) {
@@ -1101,17 +1151,57 @@ static const CGFloat kSwipeStepY = 150;
 /** tvOS warns before it ends the page's process for memory: the page lets go of the pictures out of sight. */
 - (void)didReceiveMemoryWarning {
     [super didReceiveMemoryWarning];
+    AIOLog(@"app", @"memory warning");
     [self callTV:@"trim()"];
 }
 
 - (void)appWillResignActive {
+    AIOLog(@"app", @"leaving the screen");
     [self saveWebStorage];
     [self stopRepeating];
     [self.active pauseForBackground];
 }
 
 - (void)appDidBecomeActive {
+    AIOLog(@"app", @"back on screen");
     [self.web focusPage];
+}
+
+#pragma mark - Diagnostics
+
+/** What the diagnostics server asks of the page and the app. */
+- (void)connectDiagnostics {
+    __weak typeof(self) weakSelf = self;
+    AIODiagnostics *diagnostics = AIODiagnostics.shared;
+    diagnostics.pageLog = ^(NSUInteger since, void (^done)(NSString *text)) {
+        NSString *script = [NSString stringWithFormat:@"window.__aioTV ? window.__aioTV.log(%lu) : '(no bridge on the page)'",
+                            (unsigned long)since];
+        [weakSelf.web evaluateJavaScript:script completion:^(id result) {
+            done([result isKindOfClass:NSString.class] ? result : @"(the page didn't answer)");
+        }];
+    };
+    diagnostics.clearPage = ^{
+        [weakSelf callTV:@"clearLog()"];
+    };
+    diagnostics.state = ^NSString * {
+        RootViewController *me = weakSelf;
+        if (!me) return @"";
+        NSDictionary *route = [NSUserDefaults.standardUserDefaults dictionaryForKey:kRouteKey];
+        return [NSString stringWithFormat:
+            @"Server %@\nPage %@, route %@\nPlayer chosen %@, active %@%@\nVideo %@%@%@, at %.0f ms\nLast load %@\nWeb storage %lu characters\n",
+            [me serverURL].absoluteString ?: @"none",
+            me.connected ? @"connected" : me.loadFailed ? @"failed to load" : @"loading",
+            route[@"hash"] ?: @"?",
+            [me playerTitle:me.engineName], NSStringFromClass([(NSObject *)me.active class]),
+            me.fellBack ? @" (VLC fallback)" : @"",
+            me.videoOpen ? @"open" : @"closed", me.videoPaused ? @", paused" : @"", me.videoFramed ? @", in a box" : @"",
+            me.lastPositionMs,
+            me.lastLoad ? [NSString stringWithFormat:@"%@ live=%@ startMs=%@", me.lastLoad[@"url"], me.lastLoad[@"live"], me.lastLoad[@"startMs"]] : @"none",
+            (unsigned long)me.webStorageSize];
+    };
+    NSBundle *bundle = NSBundle.mainBundle;
+    AIOLog(@"app", @"started: %@ (%@), tvOS %@", [bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"],
+           [bundle objectForInfoDictionaryKey:@"CFBundleVersion"], UIDevice.currentDevice.systemVersion);
 }
 
 @end

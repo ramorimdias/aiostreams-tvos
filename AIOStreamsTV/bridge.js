@@ -48,6 +48,86 @@
     localStorage.setItem('aiostreams-web-cache-artwork', 'false');
   } catch {}
 
+  /*
+   * The page's half of the app's diagnostics (AIODiagnostics): the keys as
+   * the app sends them and whether the page took them, focus, clicks, the
+   * bridge's messages and errors. The app hands it out with its own log.
+   */
+  const DIAG_MAX = 3000;
+  const diagLines = [];
+  let diagSeq = 0;
+  const pad = (n, width = 2) => String(n).padStart(width, '0');
+  const diag = (kind, text) => {
+    const d = new Date();
+    const at = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+    diagLines.push(`#${++diagSeq} ${at} [${kind}] ${String(text).slice(0, 500)}`);
+    if (diagLines.length > DIAG_MAX) diagLines.splice(0, diagLines.length - DIAG_MAX);
+  };
+  /** An element as a line of the log: tag, id, first classes, its role and state, and its words. */
+  const describe = (el) => {
+    if (!(el instanceof Element)) return el === document ? 'document' : String(el);
+    let text = el.tagName.toLowerCase();
+    if (el.id) text += `#${el.id}`;
+    const classes = [...el.classList].slice(0, 2);
+    if (classes.length) text += `.${classes.join('.')}`;
+    for (const name of ['role', 'data-ui', 'data-name', 'aria-checked', 'aria-expanded', 'data-state', 'type']) {
+      const value = el.getAttribute(name);
+      if (value !== null) text += `[${name}=${value}]`;
+    }
+    const words = (el.getAttribute('aria-label') || el.textContent || '').trim().replace(/\s+/g, ' ');
+    return words ? `${text} "${words.slice(0, 40)}"` : text;
+  };
+  /** A message as a line: its type and its smaller fields. */
+  const brief = (message) => {
+    const fields = {};
+    for (const [key, value] of Object.entries(message || {})) {
+      if (key === 'type' || key === 'headers') continue;
+      fields[key] = typeof value === 'string' && value.length > 120 ? `${value.slice(0, 120)}…` : value;
+    }
+    const json = JSON.stringify(fields);
+    return `${message?.type} ${json.length > 300 ? `${json.slice(0, 300)}…` : json}`;
+  };
+  /** Sent too often to log one by one. */
+  const NOISY = new Set(['tvos-storage', 'player-thumbnail', 'player-subtitle-lines']);
+  /** A player's state, without what changes as it plays, to log only what else changed. */
+  let lastState = '';
+  const stateChange = (message) => {
+    const kept = {};
+    for (const [key, value] of Object.entries(message)) {
+      if (!/position|buffer|cache|time|speed|rate|fps|bitrate|demux/i.test(key)) kept[key] = value;
+    }
+    const json = JSON.stringify(kept);
+    if (json === lastState) return null;
+    lastState = json;
+    return json;
+  };
+  /** Key events the bridge dispatched itself, which the window's listeners below leave to key(). */
+  const ours = new WeakSet();
+  for (const type of ['keydown', 'keyup']) {
+    addEventListener(
+      type,
+      (e) => {
+        if (!ours.has(e)) diag('page-key', `${type} ${e.key} on ${describe(e.target)}${e.isTrusted ? '' : ' (page)'}`);
+      },
+      true
+    );
+  }
+  addEventListener('click', (e) => diag('click', `${describe(e.target)}${e.isTrusted ? '' : ' (page)'}`), true);
+  addEventListener('focusin', (e) => diag('focus', describe(e.target)), true);
+  addEventListener('blur', (e) => e.target === window && diag('window', 'blur'));
+  addEventListener('focus', (e) => e.target === window && diag('window', 'focus'));
+  document.addEventListener('visibilitychange', () => diag('window', document.visibilityState));
+  addEventListener('unhandledrejection', (e) => diag('error', `unhandled rejection: ${e.reason?.stack || e.reason}`));
+  for (const level of ['error', 'warn']) {
+    const original = console[level];
+    console[level] = function (...args) {
+      try {
+        diag(`console.${level}`, args.map((a) => (a instanceof Error ? a.stack || a.message : typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
+      } catch {}
+      return original.apply(this, args);
+    };
+  }
+
   const listeners = new Set();
   /** Whether the page's player is open, from what the page tells the app. */
   let inPlayer = false;
@@ -75,6 +155,7 @@
       setTimeout(() => window.__aioTV && soonSweep(), 600);
     if (message?.type === 'player-seek' && skipped && skipped.toMs == null)
       skipped.toMs = Number(message.positionMs);
+    if (!NOISY.has(message?.type)) diag('to-app', brief(message));
     handler.postMessage(JSON.stringify(message));
   };
 
@@ -140,6 +221,12 @@
   // The app calls this with each message for the page.
   Object.defineProperty(window, '__aioReceive', {
     value(message) {
+      if (message?.type === 'player-state') {
+        const changed = stateChange(message);
+        if (changed) diag('from-app', `player-state ${changed}`);
+      } else if (!NOISY.has(message?.type)) {
+        diag('from-app', brief(message));
+      }
       if (skipped && message?.type === 'player-state') skipLanded(message);
       // A trailer that ends by itself is no longer playing, though the page sends no stop.
       if (message?.type === 'player-ended') {
@@ -150,6 +237,7 @@
         try {
           listener(message);
         } catch (error) {
+          diag('error', `a listener of ${message?.type}: ${error?.stack || error}`);
           console.error(error);
         }
       }
@@ -332,16 +420,20 @@
     return PLAYER_KEYS[name];
   };
 
-  const key = (type, name, repeat) =>
-    target().dispatchEvent(
-      new KeyboardEvent(type, {
-        key: name,
-        code: name === ' ' ? 'Space' : name,
-        repeat: !!repeat,
-        bubbles: true,
-        cancelable: true,
-      })
-    );
+  const key = (type, name, repeat) => {
+    const el = target();
+    const event = new KeyboardEvent(type, {
+      key: name,
+      code: name === ' ' ? 'Space' : name,
+      repeat: !!repeat,
+      bubbles: true,
+      cancelable: true,
+    });
+    ours.add(event);
+    const passed = el.dispatchEvent(event);
+    diag('key', `${type} ${name === ' ' ? 'Space' : name}${repeat ? ' (repeat)' : ''} on ${describe(el)} → ${passed ? 'not taken' : 'taken'}`);
+    return passed;
+  };
 
   const setValue = (el, value) => {
     if (el.value === value) return;
@@ -489,6 +581,10 @@
         img.setAttribute('src', BLANK);
       }
     }
+    if (marks.length) {
+      const back = marks.filter(([, held]) => held).length;
+      diag('pictures', `${marks.length - back} let go, ${back} put back, of ${document.images.length}`);
+    }
   };
   let sweepTimer = 0;
   let sweptAt = 0;
@@ -522,6 +618,7 @@
         if (name === 'Enter' && isTextField(el) && !picksFromList(el)) {
           if (repeat) return;
           swallowed = true;
+          diag('key', `Enter on ${describe(el)} opens the app's keyboard`);
           openKeyboard(el);
           return;
         }
@@ -556,6 +653,7 @@
           held && Date.now() - held.at >= HOLD_MS && now !== held.el &&
           now?.closest?.('[role=menu], [role=dialog], [role=alertdialog], [role=listbox]')
         ) {
+          diag('key', `Enter let go in ${describe(now)} after a hold: ends the hold only`);
           window.dispatchEvent(new Event('blur'));
           return;
         }
@@ -563,7 +661,15 @@
       },
       /** tvOS is short of memory: all but the screen and half of one around it lets go of its pictures. */
       trim() {
+        diag('memory', 'tvOS warned of low memory');
         if (RELEASE_PICTURES) sweep(0.25, 0.5);
+      },
+      /** The page's diagnostics lines after line `since`, for the app. */
+      log(since = 0) {
+        return diagLines.filter((line) => Number(line.slice(1, line.indexOf(' '))) > since).join('\n');
+      },
+      clearLog() {
+        diagLines.length = 0;
       },
       /** Each change on the app's search keyboard, as it is typed. */
       live(value) {
@@ -595,6 +701,7 @@
   const route = () => {
     if (location.hash === lastRoute) return;
     lastRoute = location.hash;
+    diag('route', location.hash);
     send({ type: 'tvos-route', hash: location.hash });
   };
   for (const name of ['pushState', 'replaceState']) {
@@ -608,9 +715,10 @@
   addEventListener('hashchange', route);
   addEventListener('popstate', route);
 
-  window.addEventListener('error', (e) =>
-    send({ type: 'web-error', message: String(e.message || e.error) })
-  );
+  window.addEventListener('error', (e) => {
+    diag('error', `${e.message || e.error} (${e.filename || '?'}:${e.lineno || 0})`);
+    send({ type: 'web-error', message: String(e.message || e.error) });
+  });
 
   send({ type: 'hello' });
 })();
