@@ -144,6 +144,34 @@
   diag('input', `look-ahead ${lookAhead ? 'on' : 'off'}`);
 
   /*
+   * A row's cards fade and rise in one after another as they're drawn on
+   * screen (components/media/media-row.tsx, CARD_IN: opacity 0 → 1 and 8px,
+   * 300 ms, 25 ms apart), so each Down that brought a row into view had its
+   * posters appear left to right, which read as artwork loading. On the TV
+   * they're drawn at once; the log notes each row that would have faded.
+   */
+  const CARD_FADES = false;
+  if (!CARD_FADES) {
+    const animate = Element.prototype.animate;
+    let faded = { count: 0, timer: 0, y: 0 };
+    Element.prototype.animate = function (keyframes, options) {
+      const opacity = keyframes && !Array.isArray(keyframes) ? keyframes.opacity : null;
+      const cardIn =
+        Array.isArray(opacity) && opacity[0] === 0 && opacity[1] === 1 &&
+        options?.duration === 300 && options?.fill === 'backwards';
+      if (!cardIn) return animate.call(this, keyframes, options);
+      if (!faded.count) faded.y = Math.round(this.getBoundingClientRect().top);
+      faded.count++;
+      clearTimeout(faded.timer);
+      faded.timer = setTimeout(() => {
+        diag('cards', `${faded.count} cards drawn in view without their fade, at y ${faded.y}`);
+        faded = { count: 0, timer: 0, y: 0 };
+      }, 100);
+      return animate.call(this, keyframes, { ...options, duration: 0, delay: 0 });
+    };
+  }
+
+  /*
    * Artwork that finishes loading where it can be seen fades in in view. The
    * log names each one that did, with how long it took, and sums up every few
    * seconds, to tell a late start (rows mounted near the screen) from a slow

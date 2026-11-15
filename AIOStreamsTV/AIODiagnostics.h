@@ -30,6 +30,9 @@ NS_ASSUME_NONNULL_BEGIN
 /** Empties the page's log; called on the main thread. */
 @property (nonatomic, copy, nullable) void (^clearPage)(void);
 
+/** The page's log as a reload began, which the reload would otherwise lose; served at /page-before. */
+- (void)keepPreviousPage:(NSString *)text;
+
 /** Debrid links and server addresses cut to their host and file name. */
 + (NSString *)redact:(NSString *)text;
 

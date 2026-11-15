@@ -382,7 +382,14 @@ static const CGFloat kSwipeStepY = 150;
     [self showSplash];
     NSURL *start = [self withSavedRoute:url];
     AIOLog(@"page", @"loading %@", start.absoluteString);
-    [self.web loadURL:start];
+    // The page's log goes with the page: what it held is kept for the diagnostics first.
+    __weak typeof(self) weakSelf = self;
+    [self.web evaluateJavaScript:@"window.__aioTV ? window.__aioTV.log(0) : ''" completion:^(id result) {
+        if ([result isKindOfClass:NSString.class] && [result length]) {
+            [AIODiagnostics.shared keepPreviousPage:result];
+        }
+        [weakSelf.web loadURL:start];
+    }];
 }
 
 #pragma mark - Where the page was

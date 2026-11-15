@@ -26,6 +26,8 @@ static const NSInteger kSystemLogLines = 3000;
 @property (nonatomic, strong, nullable) nw_listener_t listener;
 @property (nonatomic, readwrite) BOOL serving;
 @property (nonatomic, strong) NSDate *launched;
+/** The page's log as the last reload began. */
+@property (nonatomic, copy) NSString *previousPage;
 @end
 
 @implementation AIODiagnostics
@@ -77,6 +79,10 @@ static const NSInteger kSystemLogLines = 3000;
         text = [wanted componentsJoinedByString:@"\n"];
     });
     return text;
+}
+
+- (void)keepPreviousPage:(NSString *)text {
+    self.previousPage = text;
 }
 
 - (void)clear {
@@ -202,6 +208,8 @@ static const NSInteger kSystemLogLines = 3000;
         done([self linesSince:since]);
     } else if ([path isEqualToString:@"/page"]) {
         [self pageSince:since done:done];
+    } else if ([path isEqualToString:@"/page-before"]) {
+        done(self.previousPage.length ? [AIODiagnostics redact:self.previousPage] : @"(no reload yet)");
     } else if ([path isEqualToString:@"/oslog"]) {
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
             NSString *text = [AIODiagnostics redact:[AIOLogStore recentWithSeconds:kSystemLogSeconds limit:kSystemLogLines]];
@@ -217,6 +225,7 @@ static const NSInteger kSystemLogLines = 3000;
         }];
     } else if ([path isEqualToString:@"/clear"]) {
         [self clear];
+        self.previousPage = nil;
         if (self.clearPage) self.clearPage();
         done(@"Cleared.\n");
     } else {
@@ -225,6 +234,7 @@ static const NSInteger kSystemLogLines = 3000;
              @"/state   version, memory, player, page\n"
              @"/native  the app's log: remote, page messages, players (?since=N)\n"
              @"/page    the page's log: keys, focus, clicks, errors (?since=N)\n"
+             @"/page-before  the page's log as the last reload began\n"
              @"/oslog   the app's system log, last 15 minutes (NSLog, AetherEngine)\n"
              @"/clear   empties the app's and the page's logs\n");
     }
