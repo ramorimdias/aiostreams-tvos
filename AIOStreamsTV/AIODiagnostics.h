@@ -19,7 +19,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 /** The server is on; kept across launches. */
 @property (nonatomic, readonly) BOOL serving;
-- (void)setServing:(BOOL)serving;
+/** Turns the server on or off and remembers it. Returns why it couldn't start, or nil. */
+- (nullable NSString *)turnOn:(BOOL)on;
+/** What the server is doing, for the message after a choice in the app menu. */
+- (NSString *)status;
 /** Where the server is, e.g. `http://192.168.1.216:8642/`, while it's on. */
 @property (nonatomic, readonly, nullable) NSString *address;
 

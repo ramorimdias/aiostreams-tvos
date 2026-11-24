@@ -25,6 +25,8 @@ static const NSInteger kSystemLogLines = 3000;
 @property (nonatomic, strong) NSDateFormatter *time;
 @property (nonatomic, strong, nullable) nw_listener_t listener;
 @property (nonatomic, readwrite) BOOL serving;
+/** Why the server last failed to start or stopped, for the menu. */
+@property (nonatomic, copy, nullable) NSString *lastError;
 @property (nonatomic, strong) NSDate *launched;
 @end
 
@@ -126,10 +128,21 @@ static const NSInteger kSystemLogLines = 3000;
 
 #pragma mark - The server
 
-- (void)setServing:(BOOL)serving {
-    [NSUserDefaults.standardUserDefaults setBool:serving forKey:kServingKey];
-    if (serving) [self startServer];
-    else [self stopServer];
+- (nullable NSString *)turnOn:(BOOL)on {
+    [NSUserDefaults.standardUserDefaults setBool:on forKey:kServingKey];
+    if (!on) {
+        [self stopServer];
+        return nil;
+    }
+    return [self startServer];
+}
+
+- (NSString *)status {
+    if (self.serving) {
+        return [NSString stringWithFormat:@"Diagnostics is on. The app's log is at\n%@\non this network.", self.address];
+    }
+    if (self.lastError) return [NSString stringWithFormat:@"Diagnostics couldn't start: %@.", self.lastError];
+    return @"Diagnostics is off.";
 }
 
 - (nullable NSString *)address {
@@ -138,22 +151,26 @@ static const NSInteger kSystemLogLines = 3000;
     return [NSString stringWithFormat:@"http://%@:%s/", ip ?: @"<this Apple TV>", kPort];
 }
 
-- (void)startServer {
-    if (self.listener) return;
+- (nullable NSString *)startServer {
+    if (self.listener) return nil;
+    self.lastError = nil;
     nw_parameters_t parameters = nw_parameters_create_secure_tcp(NW_PARAMETERS_DISABLE_PROTOCOL,
                                                                  NW_PARAMETERS_DEFAULT_CONFIGURATION);
     nw_parameters_set_reuse_local_address(parameters, true);
     nw_listener_t listener = nw_listener_create_with_port(kPort, parameters);
     if (!listener) {
-        AIOLog(@"diagnostics", @"the server couldn't start on port %s", kPort);
-        return;
+        self.lastError = [NSString stringWithFormat:@"port %s couldn't be opened", kPort];
+        AIOLog(@"diagnostics", @"%@", self.lastError);
+        return self.lastError;
     }
     __weak typeof(self) weakSelf = self;
     nw_listener_set_queue(listener, dispatch_get_main_queue());
     nw_listener_set_state_changed_handler(listener, ^(nw_listener_state_t state, nw_error_t error) {
         if (state == nw_listener_state_ready) AIOLog(@"diagnostics", @"serving at %@", weakSelf.address);
         if (state == nw_listener_state_failed) {
-            AIOLog(@"diagnostics", @"the server stopped: error %d", error ? nw_error_get_error_code(error) : 0);
+            int code = error ? nw_error_get_error_code(error) : 0;
+            AIOLog(@"diagnostics", @"the server stopped: error %d", code);
+            weakSelf.lastError = [NSString stringWithFormat:@"the network refused it (error %d)", code];
             weakSelf.listener = nil;
             weakSelf.serving = NO;
         }
@@ -164,6 +181,7 @@ static const NSInteger kSystemLogLines = 3000;
     self.listener = listener;
     self.serving = YES;
     nw_listener_start(listener);
+    return nil;
 }
 
 - (void)stopServer {

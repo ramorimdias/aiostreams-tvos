@@ -510,10 +510,12 @@ static const CGFloat kSwipeStepY = 150;
     AIODiagnostics *diagnostics = AIODiagnostics.shared;
     NSString *serving = diagnostics.serving ? [NSString stringWithFormat:@"Diagnostics: on, %@", diagnostics.address] : @"Diagnostics: off";
     [menu addAction:[UIAlertAction actionWithTitle:serving style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        [diagnostics setServing:!diagnostics.serving];
-        if (diagnostics.serving) {
-            [self flashStatus:[NSString stringWithFormat:@"The app's log is at\n%@\non this network.", diagnostics.address]];
-        }
+        AIOLog(@"app", @"diagnostics chosen while %@", diagnostics.serving ? @"on" : @"off");
+        [diagnostics turnOn:!diagnostics.serving];
+        // The server starts or fails in its own time, so the message waits for it.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self flashStatus:diagnostics.status];
+        });
         [self.web focusPage];
     }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
